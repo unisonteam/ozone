@@ -28,6 +28,7 @@ import org.apache.hadoop.hdds.scm.container.ContainerInfo;
 import org.apache.hadoop.hdds.scm.container.ContainerManager;
 import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
 import org.apache.hadoop.hdds.scm.container.ContainerReplicaNotFoundException;
+import org.apache.hadoop.hdds.scm.container.placement.metrics.LongMetric;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
 import org.apache.hadoop.hdds.scm.ha.SCMContext;
@@ -38,6 +39,7 @@ import org.apache.hadoop.hdds.scm.node.states.NodeNotFoundException;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.util.StringUtils;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,8 +89,7 @@ public class ContainerBalancerTask implements Runnable {
   private List<DatanodeUsageInfo> overUtilizedNodes;
   private List<DatanodeUsageInfo> underUtilizedNodes;
   private List<DatanodeUsageInfo> withinThresholdUtilizedNodes;
-  private Set<String> excludeNodes;
-  private Set<String> includeNodes;
+
   private final ContainerBalancerConfiguration config;
   private final ContainerBalancerMetrics metrics;
   private long clusterCapacity;
@@ -313,7 +314,7 @@ public class ContainerBalancerTask implements Runnable {
   private void saveConfiguration(ContainerBalancerConfiguration configuration,
                                  boolean shouldRun, int index)
       throws IOException, TimeoutException {
-    if (!isValidSCMState()) {
+    if (scmIsNotReady()) {
       LOG.warn("Save configuration is not allowed as not in valid State.");
       return;
     }
@@ -332,7 +333,7 @@ public class ContainerBalancerTask implements Runnable {
    * @return true if successfully initialized, otherwise false.
    */
   private boolean initializeIteration() {
-    if (!isValidSCMState()) {
+    if (scmIsNotReady()) {
       return false;
     }
     // sorted list in order from most to least used
@@ -354,11 +355,9 @@ public class ContainerBalancerTask implements Runnable {
       findTargetStrategy = new FindTargetGreedyByUsageInfo(containerManager,
           placementPolicyValidateProxy, nodeManager);
     }
-    this.excludeNodes = config.getExcludeNodes();
-    this.includeNodes = config.getIncludeNodes();
+
     // include/exclude nodes from balancing according to configs
-    datanodeUsageInfos.removeIf(datanodeUsageInfo -> shouldExcludeDatanode(
-        datanodeUsageInfo.getDatanodeDetails()));
+    datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
 
     this.totalNodesInCluster = datanodeUsageInfos.size();
 
@@ -387,13 +386,16 @@ public class ContainerBalancerTask implements Runnable {
         return false;
       }
       double utilization = datanodeUsageInfo.calculateUtilization();
+      SCMNodeStat scmNodeStat = datanodeUsageInfo.getScmNodeStat();
+      Long capacity = scmNodeStat.getCapacity().get();
+
       if (LOG.isDebugEnabled()) {
         LOG.debug("Utilization for node {} with capacity {}B, used {}B, and " +
                 "remaining {}B is {}",
             datanodeUsageInfo.getDatanodeDetails().getUuidString(),
-            datanodeUsageInfo.getScmNodeStat().getCapacity().get(),
-            datanodeUsageInfo.getScmNodeStat().getScmUsed().get(),
-            datanodeUsageInfo.getScmNodeStat().getRemaining().get(),
+            capacity,
+            scmNodeStat.getScmUsed().get(),
+            scmNodeStat.getRemaining().get(),
             utilization);
       }
       if (Double.compare(utilization, upperLimit) > 0) {
@@ -401,22 +403,14 @@ public class ContainerBalancerTask implements Runnable {
         metrics.incrementNumDatanodesUnbalanced(1);
 
         // amount of bytes greater than upper limit in this node
-        long overUtilizedBytes = ratioToBytes(
-            datanodeUsageInfo.getScmNodeStat().getCapacity().get(),
-            utilization) - ratioToBytes(
-            datanodeUsageInfo.getScmNodeStat().getCapacity().get(),
-            upperLimit);
+        long overUtilizedBytes = ratioToBytes(capacity, utilization) - ratioToBytes(capacity, upperLimit);
         totalOverUtilizedBytes += overUtilizedBytes;
       } else if (Double.compare(utilization, lowerLimit) < 0) {
         underUtilizedNodes.add(datanodeUsageInfo);
         metrics.incrementNumDatanodesUnbalanced(1);
 
         // amount of bytes lesser than lower limit in this node
-        long underUtilizedBytes = ratioToBytes(
-            datanodeUsageInfo.getScmNodeStat().getCapacity().get(),
-            lowerLimit) - ratioToBytes(
-            datanodeUsageInfo.getScmNodeStat().getCapacity().get(),
-            utilization);
+        long underUtilizedBytes = ratioToBytes(capacity, lowerLimit) - ratioToBytes(capacity, utilization);
         totalUnderUtilizedBytes += underUtilizedBytes;
       } else {
         withinThresholdUtilizedNodes.add(datanodeUsageInfo);
@@ -427,8 +421,7 @@ public class ContainerBalancerTask implements Runnable {
             OzoneConsts.GB);
     Collections.reverse(underUtilizedNodes);
 
-    unBalancedNodes = new ArrayList<>(
-        overUtilizedNodes.size() + underUtilizedNodes.size());
+    unBalancedNodes = new ArrayList<>(overUtilizedNodes.size() + underUtilizedNodes.size());
     unBalancedNodes.addAll(overUtilizedNodes);
     unBalancedNodes.addAll(underUtilizedNodes);
 
@@ -460,16 +453,16 @@ public class ContainerBalancerTask implements Runnable {
     return true;
   }
 
-  private boolean isValidSCMState() {
+  private boolean scmIsNotReady() {
     if (scmContext.isInSafeMode()) {
       LOG.error("Container Balancer cannot operate while SCM is in Safe Mode.");
-      return false;
+      return true;
     }
     if (!scmContext.isLeaderReady()) {
       LOG.warn("Current SCM is not the leader.");
-      return false;
+      return true;
     }
-    return true;
+    return false;
   }
 
   private IterationResult doIteration() {
@@ -956,19 +949,23 @@ public class ContainerBalancerTask implements Runnable {
   }
 
   /**
-   * Consults the configurations {@link ContainerBalancerTask#includeNodes} and
-   * {@link ContainerBalancerTask#excludeNodes} to check if the specified
+   * Consults the configurations {@link ContainerBalancerConfiguration#includeNodes} and
+   * {@link ContainerBalancerConfiguration#excludeNodes} to check if the specified
    * Datanode should be excluded from balancing.
+   *
+   * @param config
    * @param datanode DatanodeDetails to check
    * @return true if Datanode should be excluded, else false
    */
-  private boolean shouldExcludeDatanode(DatanodeDetails datanode) {
-    if (excludeNodes.contains(datanode.getHostName()) ||
-        excludeNodes.contains(datanode.getIpAddress())) {
+  private static boolean shouldExcludeDatanode(@NotNull ContainerBalancerConfiguration config,
+                                               @NotNull DatanodeDetails datanode)
+  {
+    Set<String> includeNodes = config.getIncludeNodes();
+    Set<String> excludeNodes = config.getExcludeNodes();
+    if (excludeNodes.contains(datanode.getHostName()) || excludeNodes.contains(datanode.getIpAddress())) {
       return true;
     } else if (!includeNodes.isEmpty()) {
-      return !includeNodes.contains(datanode.getHostName()) &&
-          !includeNodes.contains(datanode.getIpAddress());
+      return !includeNodes.contains(datanode.getHostName()) && !includeNodes.contains(datanode.getIpAddress());
     }
     return false;
   }
