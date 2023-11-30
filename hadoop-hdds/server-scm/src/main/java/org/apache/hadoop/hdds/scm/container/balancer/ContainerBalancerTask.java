@@ -69,14 +69,13 @@ public class ContainerBalancerTask implements Runnable {
   public static final Logger LOG =
       LoggerFactory.getLogger(ContainerBalancerTask.class);
 
-  private NodeManager nodeManager;
-  private ContainerManager containerManager;
-  private ReplicationManager replicationManager;
-  private MoveManager moveManager;
-  private OzoneConfiguration ozoneConfiguration;
-  private ContainerBalancer containerBalancer;
+  private final NodeManager nodeManager;
+  private final ContainerManager containerManager;
+  private final ReplicationManager replicationManager;
+  private final MoveManager moveManager;
+  private final OzoneConfiguration ozoneConfiguration;
+  private final ContainerBalancer containerBalancer;
   private final SCMContext scmContext;
-  private double threshold;
   private int totalNodesInCluster;
   private double maxDatanodesRatioToInvolvePerIteration;
   private long maxSizeToMovePerIteration;
@@ -84,20 +83,18 @@ public class ContainerBalancerTask implements Runnable {
   private long sizeScheduledForMoveInLatestIteration;
   // count actual size moved in bytes
   private long sizeActuallyMovedInLatestIteration;
-  private int iterations;
   private List<DatanodeUsageInfo> unBalancedNodes;
   private List<DatanodeUsageInfo> overUtilizedNodes;
   private List<DatanodeUsageInfo> underUtilizedNodes;
   private List<DatanodeUsageInfo> withinThresholdUtilizedNodes;
   private Set<String> excludeNodes;
   private Set<String> includeNodes;
-  private ContainerBalancerConfiguration config;
-  private ContainerBalancerMetrics metrics;
+  private final ContainerBalancerConfiguration config;
+  private final ContainerBalancerMetrics metrics;
   private long clusterCapacity;
   private long clusterRemaining;
-  private double clusterAvgUtilisation;
-  private PlacementPolicyValidateProxy placementPolicyValidateProxy;
-  private NetworkTopology networkTopology;
+  private final PlacementPolicyValidateProxy placementPolicyValidateProxy;
+  private final NetworkTopology networkTopology;
   private double upperLimit;
   private double lowerLimit;
   private ContainerBalancerSelectionCriteria selectionCriteria;
@@ -110,15 +107,15 @@ public class ContainerBalancerTask implements Runnable {
   private final Map<ContainerID, DatanodeDetails> containerToSourceMap;
   private final Map<ContainerID, DatanodeDetails> containerToTargetMap;
 
-  private Set<DatanodeDetails> selectedTargets;
-  private Set<DatanodeDetails> selectedSources;
+  private final Set<DatanodeDetails> selectedTargets;
+  private final Set<DatanodeDetails> selectedSources;
   private FindTargetStrategy findTargetStrategy;
-  private FindSourceStrategy findSourceStrategy;
+  private final FindSourceStrategy findSourceStrategy;
   private Map<ContainerMoveSelection, CompletableFuture<MoveManager.MoveResult>>
       moveSelectionToFutureMap;
   private IterationResult iterationResult;
-  private int nextIterationIndex;
-  private boolean delayStart;
+  private final int nextIterationIndex;
+  private final boolean delayStart;
 
   /**
    * Constructs ContainerBalancerTask with the specified arguments.
@@ -126,13 +123,11 @@ public class ContainerBalancerTask implements Runnable {
    * @param scm the storage container manager
    * @param nextIterationIndex next iteration index for continue
    * @param containerBalancer the container balancer
-   * @param metrics the metrics
    * @param config the config
    */
   public ContainerBalancerTask(StorageContainerManager scm,
                                int nextIterationIndex,
                                ContainerBalancer containerBalancer,
-                               ContainerBalancerMetrics metrics,
                                ContainerBalancerConfiguration config,
                                boolean delayStart) {
     this.nodeManager = scm.getScmNodeManager();
@@ -146,7 +141,7 @@ public class ContainerBalancerTask implements Runnable {
     this.ozoneConfiguration = scm.getConfiguration();
     this.containerBalancer = containerBalancer;
     this.config = config;
-    this.metrics = metrics;
+    this.metrics = containerBalancer.getMetrics();
     this.scmContext = scm.getScmContext();
     this.overUtilizedNodes = new ArrayList<>();
     this.underUtilizedNodes = new ArrayList<>();
@@ -198,10 +193,10 @@ public class ContainerBalancerTask implements Runnable {
   }
 
   private void balance() {
-    this.iterations = config.getIterations();
-    if (this.iterations == -1) {
+    int iterations = config.getIterations();
+    if (iterations == -1) {
       //run balancer infinitely
-      this.iterations = Integer.MAX_VALUE;
+      iterations = Integer.MAX_VALUE;
     }
 
     // nextIterationIndex is the iteration that balancer should start from on
@@ -341,17 +336,15 @@ public class ContainerBalancerTask implements Runnable {
       return false;
     }
     // sorted list in order from most to least used
-    List<DatanodeUsageInfo> datanodeUsageInfos =
-        nodeManager.getMostOrLeastUsedDatanodes(true);
+    List<DatanodeUsageInfo> datanodeUsageInfos = nodeManager.getMostOrLeastUsedDatanodes(true);
     if (datanodeUsageInfos.isEmpty()) {
       LOG.warn("Received an empty list of datanodes from Node Manager when " +
           "trying to identify which nodes to balance");
       return false;
     }
 
-    this.threshold = config.getThresholdAsRatio();
-    this.maxDatanodesRatioToInvolvePerIteration =
-        config.getMaxDatanodesRatioToInvolvePerIteration();
+    double threshold = config.getThresholdAsRatio();
+    this.maxDatanodesRatioToInvolvePerIteration = config.getMaxDatanodesRatioToInvolvePerIteration();
     this.maxSizeToMovePerIteration = config.getMaxSizeToMovePerIteration();
     if (config.getNetworkTopologyEnable()) {
       findTargetStrategy = new FindTargetGreedyByNetworkTopology(
@@ -369,7 +362,7 @@ public class ContainerBalancerTask implements Runnable {
 
     this.totalNodesInCluster = datanodeUsageInfos.size();
 
-    clusterAvgUtilisation = calculateAvgUtilization(datanodeUsageInfos);
+    double clusterAvgUtilisation = calculateAvgUtilization(datanodeUsageInfos);
     if (LOG.isDebugEnabled()) {
       LOG.debug("Average utilization of the cluster is {}",
           clusterAvgUtilisation);
@@ -522,8 +515,7 @@ public class ContainerBalancerTask implements Runnable {
         }
       }
 
-      DatanodeDetails source =
-          findSourceStrategy.getNextCandidateSourceDataNode();
+      DatanodeDetails source = findSourceStrategy.getNextCandidateSourceDataNode();
       if (source == null) {
         // no more source DNs are present
         break;
@@ -623,10 +615,8 @@ public class ContainerBalancerTask implements Runnable {
       LOG.error("Got exception while checkIterationMoveResults", e);
     }
 
-    countDatanodesInvolvedPerIteration =
-        selectedSources.size() + selectedTargets.size();
-    metrics.incrementNumDatanodesInvolvedInLatestIteration(
-        countDatanodesInvolvedPerIteration);
+    countDatanodesInvolvedPerIteration = selectedSources.size() + selectedTargets.size();
+    metrics.incrementNumDatanodesInvolvedInLatestIteration(countDatanodesInvolvedPerIteration);
     metrics.incrementNumContainerMovesScheduled(
         metrics.getNumContainerMovesScheduledInLatestIteration());
     metrics.incrementNumContainerMovesCompleted(
@@ -746,8 +736,7 @@ public class ContainerBalancerTask implements Runnable {
    */
   private boolean adaptWhenNearingIterationLimits() {
     // check if we're nearing max datanodes to involve
-    int maxDatanodesToInvolve =
-        (int) (maxDatanodesRatioToInvolvePerIteration * totalNodesInCluster);
+    int maxDatanodesToInvolve = (int) (maxDatanodesRatioToInvolvePerIteration * totalNodesInCluster);
     if (countDatanodesInvolvedPerIteration + 1 == maxDatanodesToInvolve) {
       /* We're one datanode away from reaching the limit. Restrict potential
       targets to targets that have already been selected.
@@ -1105,14 +1094,12 @@ public class ContainerBalancerTask implements Runnable {
     return iterationResult;
   }
 
-  @VisibleForTesting
-  void setConfig(ContainerBalancerConfiguration config) {
-    this.config = config;
+  public boolean isRunning() {
+    return taskStatus == Status.RUNNING;
   }
 
-  @VisibleForTesting
-  void setTaskStatus(Status taskStatus) {
-    this.taskStatus = taskStatus;
+  public boolean isStopped() {
+    return taskStatus == Status.STOPPED;
   }
 
   public Status getBalancerStatus() {
