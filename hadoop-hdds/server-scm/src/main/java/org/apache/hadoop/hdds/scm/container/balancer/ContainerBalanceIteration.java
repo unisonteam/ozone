@@ -12,7 +12,7 @@ import java.util.List;
 public class ContainerBalanceIteration {
   private static final Logger LOGGER = LoggerFactory.getLogger(ContainerBalanceIteration.class);
 
-  public final double maxDatanodesRatioToInvolvePerIteration;
+  public final int maxDatanodeCountToUseInIteration;
   public final long maxSizeToMovePerIteration;
   public final int totalNodesInCluster;
   public final double upperLimit;
@@ -29,10 +29,9 @@ public class ContainerBalanceIteration {
     findSourceStrategy = new FindSourceGreedy(scm.getScmNodeManager());
     findTargetStrategy = FindTargetStrategyFactory.create(scm, config.getNetworkTopologyEnable());
     double threshold = config.getThresholdAsRatio();
-    this.maxDatanodesRatioToInvolvePerIteration = config.getMaxDatanodesRatioToInvolvePerIteration();
     this.maxSizeToMovePerIteration = config.getMaxSizeToMovePerIteration();
-
     this.totalNodesInCluster = datanodeUsageInfos.size();
+    this.maxDatanodeCountToUseInIteration = calculateMaxDatanodeCountToUseInIteration(config, totalNodesInCluster);
 
     double clusterAvgUtilisation = calculateAvgUtilization(datanodeUsageInfos);
     LOGGER.debug("Average utilization of the cluster is {}", clusterAvgUtilisation);
@@ -44,6 +43,12 @@ public class ContainerBalanceIteration {
     lowerLimit = clusterAvgUtilisation - threshold;
 
     LOGGER.debug("Lower limit for utilization is {} and Upper limit for utilization is {}", lowerLimit, upperLimit);
+  }
+
+  private static int calculateMaxDatanodeCountToUseInIteration(ContainerBalancerConfiguration config,
+                                                               int totalNodesInCluster)
+  {
+    return (int) (config.getMaxDatanodesRatioToInvolvePerIteration() * totalNodesInCluster);
   }
 
   /**

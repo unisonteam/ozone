@@ -354,9 +354,7 @@ public class ContainerBalancerTask implements Runnable {
         withinThresholdUtilizedNodes.add(datanodeUsageInfo);
       }
     }
-    metrics.incrementDataSizeUnbalancedGB(
-        Math.max(totalOverUtilizedBytes, totalUnderUtilizedBytes) /
-            OzoneConsts.GB);
+    metrics.incrementDataSizeUnbalancedGB(Math.max(totalOverUtilizedBytes, totalUnderUtilizedBytes) / OzoneConsts.GB);
     Collections.reverse(underUtilizedNodes);
 
     unBalancedNodes = new ArrayList<>(overUtilizedNodes.size() + underUtilizedNodes.size());
@@ -635,8 +633,7 @@ public class ContainerBalancerTask implements Runnable {
    */
   private boolean adaptWhenNearingIterationLimits(ContainerBalanceIteration it, int datanodeCountUsedIteration) {
     // check if we're nearing max datanodes to involve
-    int maxDatanodesToInvolve = (int) (it.maxDatanodesRatioToInvolvePerIteration * it.totalNodesInCluster);
-    if (datanodeCountUsedIteration + 1 == maxDatanodesToInvolve) {
+    if (datanodeCountUsedIteration + 1 == it.maxDatanodeCountToUseInIteration) {
       /* We're one datanode away from reaching the limit. Restrict potential
       targets to targets that have already been selected.
        */
@@ -645,7 +642,7 @@ public class ContainerBalancerTask implements Runnable {
               "have already been selected for balancing and the limit is " +
               "{}. Only already selected targets can be selected as targets" +
               " now.",
-          datanodeCountUsedIteration, maxDatanodesToInvolve);
+          datanodeCountUsedIteration, it.maxDatanodeCountToUseInIteration);
       return true;
     }
 
@@ -661,8 +658,7 @@ public class ContainerBalancerTask implements Runnable {
    */
   private boolean adaptOnReachingIterationLimits(ContainerBalanceIteration it, int datanodeCountUsedIteration) {
     // check if we've reached max datanodes to involve limit
-    int maxDatanodesToInvolve = (int) (it.maxDatanodesRatioToInvolvePerIteration * it.totalNodesInCluster);
-    if (datanodeCountUsedIteration == maxDatanodesToInvolve) {
+    if (datanodeCountUsedIteration == it.maxDatanodeCountToUseInIteration) {
       // restrict both to already selected sources and targets
       findTargetStrategy.resetPotentialTargets(selectedTargets);
       findSourceStrategy.resetPotentialSources(selectedSources);
@@ -670,7 +666,7 @@ public class ContainerBalancerTask implements Runnable {
               "have already been selected for balancing and the limit " +
               "is {}. Only already selected sources and targets can be " +
               "involved in balancing now.",
-          datanodeCountUsedIteration, maxDatanodesToInvolve);
+          datanodeCountUsedIteration, it.maxDatanodeCountToUseInIteration);
       return true;
     }
 
@@ -696,15 +692,12 @@ public class ContainerBalancerTask implements Runnable {
       ContainerInfo containerInfo = containerManager.getContainer(containerID);
 
       /*
-      If LegacyReplicationManager is enabled, ReplicationManager will
-      redirect to it. Otherwise, use MoveManager.
+      If LegacyReplicationManager is enabled, ReplicationManager will redirect to it. Otherwise, use MoveManager.
        */
       if (replicationManager.getConfig().isLegacyEnabled()) {
-        future = replicationManager
-            .move(containerID, source, moveSelection.getTargetNode());
+        future = replicationManager.move(containerID, source, moveSelection.getTargetNode());
       } else {
-        future = moveManager.move(containerID, source,
-            moveSelection.getTargetNode());
+        future = moveManager.move(containerID, source, moveSelection.getTargetNode());
       }
       metrics.incrementNumContainerMovesScheduledInLatestIteration(1);
 
@@ -770,8 +763,9 @@ public class ContainerBalancerTask implements Runnable {
    * @param source          the source datanode
    * @param iterationResult
    */
-  private void updateTargetsAndSelectionCriteria(
-      ContainerMoveSelection moveSelection, DatanodeDetails source, IterationState iterationResult) {
+  private void updateTargetsAndSelectionCriteria(ContainerMoveSelection moveSelection, DatanodeDetails source,
+                                                 IterationState iterationResult)
+  {
     ContainerID containerID = moveSelection.getContainerID();
     DatanodeDetails target = moveSelection.getTargetNode();
 
@@ -789,8 +783,7 @@ public class ContainerBalancerTask implements Runnable {
     containerToTargetMap.put(containerID, target);
     selectedTargets.add(target);
     selectedSources.add(source);
-    selectionCriteria.setSelectedContainers(
-        new HashSet<>(containerToSourceMap.keySet()));
+    selectionCriteria.setSelectedContainers(new HashSet<>(containerToSourceMap.keySet()));
   }
 
   /**
@@ -859,15 +852,15 @@ public class ContainerBalancerTask implements Runnable {
    * @param moveSelection   selected target datanode and container
    * @param iterationResult
    */
-  private void incSizeSelectedForMoving(DatanodeDetails source, ContainerMoveSelection moveSelection, IterationState iterationResult) {
+  private void incSizeSelectedForMoving(DatanodeDetails source, ContainerMoveSelection moveSelection,
+                                        IterationState iterationResult)
+  {
     DatanodeDetails target = moveSelection.getTargetNode();
     ContainerInfo container;
     try {
-      container =
-          containerManager.getContainer(moveSelection.getContainerID());
+      container = containerManager.getContainer(moveSelection.getContainerID());
     } catch (ContainerNotFoundException e) {
-      LOG.warn("Could not find Container {} while matching source and " +
-              "target nodes in ContainerBalancer",
+      LOG.warn("Could not find Container {} while matching source and target nodes in ContainerBalancer",
           moveSelection.getContainerID(), e);
       return;
     }
