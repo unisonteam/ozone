@@ -23,7 +23,6 @@ import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.scm.container.*;
-import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
 import org.apache.hadoop.hdds.scm.ha.SCMContext;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
@@ -63,10 +62,6 @@ public class ContainerBalancerTask implements Runnable {
   private final ContainerBalancer containerBalancer;
   private final SCMContext scmContext;
   private final StorageContainerManager scm;
-  private List<DatanodeUsageInfo> unBalancedNodes;
-  private List<DatanodeUsageInfo> overUtilizedNodes;
-  private List<DatanodeUsageInfo> underUtilizedNodes;
-  private List<DatanodeUsageInfo> withinThresholdUtilizedNodes;
 
   private final ContainerBalancerConfiguration config;
   private final ContainerBalancerMetrics metrics;
@@ -87,6 +82,7 @@ public class ContainerBalancerTask implements Runnable {
   private final ArrayList<MoveState> moveStateList;
   private final IterationState iterationState;
   private final boolean delayStart;
+  private ContainerBalanceIteration it;
 
   /**
    * Constructs ContainerBalancerTask with the specified arguments.
@@ -115,10 +111,6 @@ public class ContainerBalancerTask implements Runnable {
     this.config = config;
     this.metrics = containerBalancer.getMetrics();
     this.scmContext = scm.getScmContext();
-    this.overUtilizedNodes = new ArrayList<>();
-    this.underUtilizedNodes = new ArrayList<>();
-    this.withinThresholdUtilizedNodes = new ArrayList<>();
-    this.unBalancedNodes = new ArrayList<>();
     this.containerToSourceMap = new HashMap<>();
     this.containerToTargetMap = new HashMap<>();
     this.selectedSources = new HashSet<>();
@@ -221,10 +213,11 @@ public class ContainerBalancerTask implements Runnable {
       // include/exclude nodes from balancing according to configs
       datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
 
-      ContainerBalanceIteration it = new ContainerBalanceIteration(config, scm, datanodeUsageInfos);
+      it = new ContainerBalanceIteration(config, scm, datanodeUsageInfos);
 
       // initialize this iteration. stop balancing on initialization failure
-      if (!initializeIteration(datanodeUsageInfos, it)) {
+      boolean b = it.findOverAndUnderUtilizedNodes(this, metrics, datanodeUsageInfos);
+      if (!b) {
         // just return if the reason for initialization failure is that
         // balancer has been stopped in another thread
         if (!isBalancerRunning()) {
@@ -309,82 +302,6 @@ public class ContainerBalancerTask implements Runnable {
         containerBalancer.saveConfiguration(configuration, shouldRun, index);
       }
     }
-  }
-
-  /**
-   * Initializes an iteration during balancing. Recognizes over, under, and
-   * within threshold utilized nodes. Decides whether balancing needs to
-   * continue or should be stopped.
-   *
-   * @return true if successfully initialized, otherwise false.
-   */
-  private boolean initializeIteration(List<DatanodeUsageInfo> datanodeUsageInfos, ContainerBalanceIteration it) {
-    long totalOverUtilizedBytes = 0L, totalUnderUtilizedBytes = 0L;
-    // find over and under utilized nodes
-    for (DatanodeUsageInfo datanodeUsageInfo : datanodeUsageInfos) {
-      if (!isBalancerRunning()) {
-        return false;
-      }
-      double utilization = datanodeUsageInfo.calculateUtilization();
-      SCMNodeStat scmNodeStat = datanodeUsageInfo.getScmNodeStat();
-      Long capacity = scmNodeStat.getCapacity().get();
-
-      LOG.debug("Utilization for node {} with capacity {}B, used {}B, and " +
-              "remaining {}B is {}",
-          datanodeUsageInfo.getDatanodeDetails().getUuidString(),
-          capacity,
-          scmNodeStat.getScmUsed().get(),
-          scmNodeStat.getRemaining().get(),
-          utilization);
-      if (Double.compare(utilization, it.upperLimit) > 0) {
-        overUtilizedNodes.add(datanodeUsageInfo);
-        metrics.incrementNumDatanodesUnbalanced(1);
-
-        // amount of bytes greater than upper limit in this node
-        long overUtilizedBytes = ratioToBytes(capacity, utilization) - ratioToBytes(capacity, it.upperLimit);
-        totalOverUtilizedBytes += overUtilizedBytes;
-      } else if (Double.compare(utilization, it.lowerLimit) < 0) {
-        underUtilizedNodes.add(datanodeUsageInfo);
-        metrics.incrementNumDatanodesUnbalanced(1);
-
-        // amount of bytes lesser than lower limit in this node
-        long underUtilizedBytes = ratioToBytes(capacity, it.lowerLimit) - ratioToBytes(capacity, utilization);
-        totalUnderUtilizedBytes += underUtilizedBytes;
-      } else {
-        withinThresholdUtilizedNodes.add(datanodeUsageInfo);
-      }
-    }
-    metrics.incrementDataSizeUnbalancedGB(Math.max(totalOverUtilizedBytes, totalUnderUtilizedBytes) / OzoneConsts.GB);
-    Collections.reverse(underUtilizedNodes);
-
-    unBalancedNodes = new ArrayList<>(overUtilizedNodes.size() + underUtilizedNodes.size());
-    unBalancedNodes.addAll(overUtilizedNodes);
-    unBalancedNodes.addAll(underUtilizedNodes);
-
-    if (unBalancedNodes.isEmpty()) {
-      LOG.info("Did not find any unbalanced Datanodes.");
-      return false;
-    }
-
-    LOG.info("Container Balancer has identified {} Over-Utilized and {} " +
-            "Under-Utilized Datanodes that need to be balanced.",
-        overUtilizedNodes.size(), underUtilizedNodes.size());
-
-    if (LOG.isDebugEnabled()) {
-      overUtilizedNodes.forEach(entry -> {
-        LOG.debug("Datanode {} {} is Over-Utilized.",
-            entry.getDatanodeDetails().getHostName(),
-            entry.getDatanodeDetails().getUuid());
-      });
-
-      underUtilizedNodes.forEach(entry -> {
-        LOG.debug("Datanode {} {} is Under-Utilized.",
-            entry.getDatanodeDetails().getHostName(),
-            entry.getDatanodeDetails().getUuid());
-      });
-    }
-
-    return true;
   }
 
   private boolean scmIsNotReady() {
@@ -786,16 +703,6 @@ public class ContainerBalancerTask implements Runnable {
     selectionCriteria.setSelectedContainers(new HashSet<>(containerToSourceMap.keySet()));
   }
 
-  /**
-   * Calculates the number of used bytes given capacity and utilization ratio.
-   *
-   * @param nodeCapacity     capacity of the node.
-   * @param utilizationRatio used space by capacity ratio of the node.
-   * @return number of bytes
-   */
-  private long ratioToBytes(Long nodeCapacity, double utilizationRatio) {
-    return (long) (nodeCapacity * utilizationRatio);
-  }
 
   /**
    * Get potential targets for container move. Potential targets are under
@@ -806,7 +713,7 @@ public class ContainerBalancerTask implements Runnable {
   private List<DatanodeUsageInfo> getPotentialTargets() {
     //TODO(jacksonyao): take withinThresholdUtilizedNodes as candidate for both
     // source and target
-    return underUtilizedNodes;
+    return it.getUnderUtilizedNodes();
   }
 
   /**
@@ -818,7 +725,7 @@ public class ContainerBalancerTask implements Runnable {
   private List<DatanodeUsageInfo> getPotentialSources() {
     //TODO(jacksonyao): take withinThresholdUtilizedNodes as candidate for both
     // source and target
-    return overUtilizedNodes;
+    return it.getOverUtilizedNodes();
   }
 
   /**
@@ -879,9 +786,6 @@ public class ContainerBalancerTask implements Runnable {
    */
   private void resetState() {
     moveManager.resetState();
-    this.overUtilizedNodes.clear();
-    this.underUtilizedNodes.clear();
-    this.unBalancedNodes.clear();
     this.containerToSourceMap.clear();
     this.containerToTargetMap.clear();
     this.selectedSources.clear();
@@ -900,7 +804,7 @@ public class ContainerBalancerTask implements Runnable {
    *
    * @return true if the status is RUNNING, otherwise false
    */
-  private boolean isBalancerRunning() {
+  boolean isBalancerRunning() {
     return taskStatus == Status.RUNNING;
   }
 
@@ -912,7 +816,7 @@ public class ContainerBalancerTask implements Runnable {
    */
   @VisibleForTesting
   List<DatanodeUsageInfo> getUnBalancedNodes() {
-    return unBalancedNodes;
+    return it.getUnBalancedNodes();
   }
 
   /**
