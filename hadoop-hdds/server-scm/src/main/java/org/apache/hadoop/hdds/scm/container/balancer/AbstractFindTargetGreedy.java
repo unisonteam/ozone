@@ -29,52 +29,38 @@ import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
 import org.apache.hadoop.hdds.scm.container.ContainerReplica;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
 import org.apache.hadoop.hdds.scm.node.NodeManager;
+import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import javax.annotation.Nonnull;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Find a target for a source datanode with greedy strategy.
  */
 public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
-  private Logger logger;
-  private ContainerManager containerManager;
-  private PlacementPolicyValidateProxy placementPolicyValidateProxy;
-  private Map<DatanodeDetails, Long> sizeEnteringNode;
-  private NodeManager nodeManager;
-  private ContainerBalancerConfiguration config;
-  private Double upperLimit;
+  private final Logger logger;
+  private final ContainerManager containerManager;
+  private final PlacementPolicyValidateProxy placementPolicyValidateProxy;
+  private final Map<DatanodeDetails, Long> sizeEnteringNode;
+  private final NodeManager nodeManager;
   private Collection<DatanodeUsageInfo> potentialTargets;
 
-  protected AbstractFindTargetGreedy(
-      ContainerManager containerManager,
-      PlacementPolicyValidateProxy placementPolicyValidateProxy,
-      NodeManager nodeManager) {
+  protected AbstractFindTargetGreedy(@Nonnull StorageContainerManager scm, @Nonnull Class<?> findTargetClazz) {
     sizeEnteringNode = new HashMap<>();
-    this.containerManager = containerManager;
-    this.placementPolicyValidateProxy = placementPolicyValidateProxy;
-    this.nodeManager = nodeManager;
+    containerManager = scm.getContainerManager();
+    placementPolicyValidateProxy = scm.getPlacementPolicyValidateProxy();
+    nodeManager = scm.getScmNodeManager();
+    logger = LoggerFactory.getLogger(findTargetClazz);
   }
 
-  protected void setLogger(Logger log) {
-    logger = log;
-  }
-
-  protected void setPotentialTargets(Collection<DatanodeUsageInfo> pt) {
+  protected void setPotentialTargets(@Nonnull Collection<DatanodeUsageInfo> pt) {
     potentialTargets = pt;
   }
 
-  private void setUpperLimit(Double upperLimit) {
-    this.upperLimit = upperLimit;
-  }
-
-  protected int compareByUsage(DatanodeUsageInfo a, DatanodeUsageInfo b) {
+  protected int compareByUsage(@Nonnull DatanodeUsageInfo a, @Nonnull DatanodeUsageInfo b) {
     double currentUsageOfA = a.calculateUtilization(
         sizeEnteringNode.get(a.getDatanodeDetails()));
     double currentUsageOfB = b.calculateUtilization(
@@ -88,24 +74,13 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
     return uuidA.compareTo(uuidB);
   }
 
-  private void setConfiguration(ContainerBalancerConfiguration conf) {
-    config = conf;
-  }
-
-  /**
-   * Find a {@link ContainerMoveSelection} consisting of a target and
-   * container to move for a source datanode. Favours more under-utilized nodes.
-   * @param source Datanode to find a target for
-   * @param candidateContainers Set of candidate containers satisfying
-   *                            selection criteria
-   *                            {@link ContainerBalancerSelectionCriteria}
-   * (DatanodeDetails, Long) method returns true if the size specified in the
-   * second argument can enter the specified DatanodeDetails node
-   * @return Found target and container
-   */
   @Override
   public ContainerMoveSelection findTargetForContainerMove(
-      DatanodeDetails source, Set<ContainerID> candidateContainers) {
+      @Nonnull DatanodeDetails source,
+      @Nonnull Set<ContainerID> candidateContainers,
+      long maxSizeEnteringTarget,
+      double upperLimit)
+  {
     sortTargetForSource(source);
     for (DatanodeUsageInfo targetInfo : potentialTargets) {
       DatanodeDetails target = targetInfo.getDatanodeDetails();
@@ -121,11 +96,10 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
           continue;
         }
 
-        if (replicas.stream().noneMatch(
-            replica -> replica.getDatanodeDetails().equals(target)) &&
-            containerMoveSatisfiesPlacementPolicy(container, replicas, source,
-            target) &&
-            canSizeEnterTarget(target, containerInfo.getUsedBytes())) {
+        if (replicas.stream().noneMatch(replica -> replica.getDatanodeDetails().equals(target)) &&
+            containerMoveSatisfiesPlacementPolicy(container, replicas, source, target) &&
+            canSizeEnterTarget(target, containerInfo.getUsedBytes(), maxSizeEnteringTarget, upperLimit))
+        {
           return new ContainerMoveSelection(target, container);
         }
       }
@@ -145,8 +119,11 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
    * @return true if placement policy is satisfied, otherwise false
    */
   private boolean containerMoveSatisfiesPlacementPolicy(
-      ContainerID containerID, Set<ContainerReplica> replicas,
-      DatanodeDetails source, DatanodeDetails target) {
+      @Nonnull ContainerID containerID,
+      @Nonnull Set<ContainerReplica> replicas,
+      @Nonnull DatanodeDetails source,
+      @Nonnull DatanodeDetails target)
+  {
     ContainerInfo containerInfo;
     try {
       containerInfo = containerManager.getContainer(containerID);
@@ -168,8 +145,7 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
     boolean isPolicySatisfied = placementStatus.isPolicySatisfied();
     if (!isPolicySatisfied) {
       logger.debug("Moving container {} from source {} to target {} will not " +
-              "satisfy placement policy.", containerID, source.getUuidString(),
-          target.getUuidString());
+              "satisfy placement policy.", containerID, source.getUuidString(), target.getUuidString());
     }
     return isPolicySatisfied;
   }
@@ -183,7 +159,9 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
    * @param size   size in bytes
    * @return true if size can enter target, else false
    */
-  private boolean canSizeEnterTarget(DatanodeDetails target, long size) {
+  private boolean canSizeEnterTarget(@Nonnull DatanodeDetails target,
+                                     long size, long maxSizeEnteringTarget, double upperLimit)
+  {
     if (sizeEnteringNode.containsKey(target)) {
       long sizeEnteringAfterMove = sizeEnteringNode.get(target) + size;
       //size can be moved into target datanode only when the following
@@ -192,11 +170,11 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
       // MaxSizeEnteringTarget
       //2 current usage of target datanode plus sizeEnteringAfterMove
       // is smaller than or equal to upperLimit
-      if (sizeEnteringAfterMove > config.getMaxSizeEnteringTarget()) {
+      if (sizeEnteringAfterMove > maxSizeEnteringTarget) {
         logger.debug("{} bytes cannot enter datanode {} because 'size" +
                 ".entering.target.max' limit is {} and {} bytes have already " +
                 "entered.", size, target.getUuidString(),
-            config.getMaxSizeEnteringTarget(),
+            maxSizeEnteringTarget,
             sizeEnteringNode.get(target));
         return false;
       }
@@ -215,17 +193,14 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
     return false;
   }
 
-  /**
-   * increase the Entering size of a candidate target data node.
-   */
   @Override
-  public void increaseSizeEntering(DatanodeDetails target, long size) {
+  public void increaseSizeEntering(@Nonnull DatanodeDetails target, long size, long maxSizeEnteringTarget) {
     if (sizeEnteringNode.containsKey(target)) {
       long totalEnteringSize = sizeEnteringNode.get(target) + size;
       sizeEnteringNode.put(target, totalEnteringSize);
       potentialTargets.removeIf(
           c -> c.getDatanodeDetails().equals(target));
-      if (totalEnteringSize < config.getMaxSizeEnteringTarget()) {
+      if (totalEnteringSize < maxSizeEnteringTarget) {
         //reorder
         potentialTargets.add(nodeManager.getUsageInfo(target));
       }
@@ -235,21 +210,18 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
         target.getUuid());
   }
 
-  /**
-   * reInitialize FindTargetStrategy with the given new parameters.
-   */
   @Override
-  public void reInitialize(List<DatanodeUsageInfo> potentialDataNodes,
-                           ContainerBalancerConfiguration conf,
-                           Double upLimit) {
-    setConfiguration(conf);
-    setUpperLimit(upLimit);
+  public void reInitialize(@Nonnull List<DatanodeUsageInfo> potentialDataNodes) {
     sizeEnteringNode.clear();
-    resetTargets(potentialDataNodes);
+    potentialTargets.clear();
+    potentialDataNodes.forEach(datanodeUsageInfo -> {
+      sizeEnteringNode.putIfAbsent(datanodeUsageInfo.getDatanodeDetails(), 0L);
+      potentialTargets.add(datanodeUsageInfo);
+    });
   }
 
   @VisibleForTesting
-  public Collection<DatanodeUsageInfo> getPotentialTargets() {
+  public @Nonnull Collection<DatanodeUsageInfo> getPotentialTargets() {
     return potentialTargets;
   }
 
@@ -259,23 +231,21 @@ public abstract class AbstractFindTargetGreedy implements FindTargetStrategy {
    * @param source the specified source datanode
    */
   @VisibleForTesting
-  public abstract void sortTargetForSource(DatanodeDetails source);
+  public abstract void sortTargetForSource(@Nonnull DatanodeDetails source);
 
   /**
-   * Resets the collection of potential target datanodes that are considered
-   * to identify a target for a source.
-   * @param targets potential targets
+   * Resets the collection of target datanode usage info that will be
+   * considered for balancing. Gets the latest usage info from node manager.
+   * @param targets collection of target {@link DatanodeDetails} that
+   *                containers can move to
    */
-  void resetTargets(Collection<DatanodeUsageInfo> targets) {
+  @Override
+  public final void resetPotentialTargets(@Nonnull Collection<DatanodeDetails> targets) {
     potentialTargets.clear();
-    targets.forEach(datanodeUsageInfo -> {
-      sizeEnteringNode.putIfAbsent(datanodeUsageInfo.getDatanodeDetails(), 0L);
-      potentialTargets.add(datanodeUsageInfo);
+    targets.forEach(datanodeDetails -> {
+      DatanodeUsageInfo usageInfo = nodeManager.getUsageInfo(datanodeDetails);
+      sizeEnteringNode.putIfAbsent(datanodeDetails, 0L);
+      potentialTargets.add(usageInfo);
     });
   }
-
-  NodeManager getNodeManager() {
-    return nodeManager;
-  }
-
 }

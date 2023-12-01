@@ -39,28 +39,31 @@ public interface FindTargetStrategy {
    * functional interface with a method that returns true if a given size can
    * enter a potential target.
    *
-   * @param source Datanode to find a target for
-   * @param candidateContainers Set of candidate containers satisfying
-   *                            selection criteria
-   *                            {@link ContainerBalancerSelectionCriteria}
-   * (DatanodeDetails, Long) method returns true if the size specified in the
-   * second argument can enter the specified DatanodeDetails node
+   * @param source                Datanode to find a target for
+   * @param candidateContainers   Set of candidate containers satisfying
+   *                              selection criteria
+   *                              {@link ContainerBalancerSelectionCriteria}
+   *                              (DatanodeDetails, Long) method returns true if the size specified in the
+   *                              second argument can enter the specified DatanodeDetails node
+   * @param maxSizeEnteringTarget The maximum size that can enter a target datanode in each iteration while balancing.
+   *                              {@link ContainerBalancerConfiguration#maxSizeEnteringTarget}
+   * @param upperLimit            The value of upper limit for node utilization: clusterAvgUtilisation + threshold
    * @return {@link ContainerMoveSelection} containing the target node and
    * selected container
    */
-  ContainerMoveSelection findTargetForContainerMove(
-      DatanodeDetails source, Set<ContainerID> candidateContainers);
+  ContainerMoveSelection findTargetForContainerMove(@Nonnull DatanodeDetails source,
+                                                    @Nonnull Set<ContainerID> candidateContainers,
+                                                    long maxSizeEnteringTarget, double upperLimit);
 
   /**
    * increase the Entering size of a candidate target data node.
    */
-  void increaseSizeEntering(DatanodeDetails target, long size);
+  void increaseSizeEntering(@Nonnull DatanodeDetails target, long size, long maxSizeEnteringTarget);
 
   /**
    * reInitialize FindTargetStrategy.
    */
-  void reInitialize(List<DatanodeUsageInfo> potentialDataNodes,
-                    ContainerBalancerConfiguration config, Double upperLimit);
+  void reInitialize(@Nonnull List<DatanodeUsageInfo> potentialDataNodes);
 
   /**
    * Resets the collection of target {@link DatanodeUsageInfo} that can be

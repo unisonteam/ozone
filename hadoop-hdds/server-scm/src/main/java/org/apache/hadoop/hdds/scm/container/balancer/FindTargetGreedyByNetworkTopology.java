@@ -20,80 +20,46 @@ package org.apache.hadoop.hdds.scm.container.balancer;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
-import org.apache.hadoop.hdds.scm.PlacementPolicyValidateProxy;
-import org.apache.hadoop.hdds.scm.container.ContainerManager;
 import org.apache.hadoop.hdds.scm.net.NetworkTopology;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
-import org.apache.hadoop.hdds.scm.node.NodeManager;
-import org.jetbrains.annotations.NotNull;
-import org.slf4j.LoggerFactory;
+import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
 
 /**
  * an implementation of FindTargetGreedy, which will always select the
  * target with the shortest distance according to network topology
  * distance to the give source datanode.
  */
-public class FindTargetGreedyByNetworkTopology
-    extends AbstractFindTargetGreedy {
+public class FindTargetGreedyByNetworkTopology extends AbstractFindTargetGreedy {
+  private final NetworkTopology networkTopology;
+  private final ArrayList<DatanodeUsageInfo> potentialTargets;
 
-  private NetworkTopology networkTopology;
-  private List potentialTargets;
-
-  public FindTargetGreedyByNetworkTopology(
-      ContainerManager containerManager,
-      PlacementPolicyValidateProxy placementPolicyValidateProxy,
-      NodeManager nodeManager,
-      NetworkTopology networkTopology) {
-    super(containerManager, placementPolicyValidateProxy, nodeManager);
-    setLogger(LoggerFactory.getLogger(FindTargetGreedyByNetworkTopology.class));
-    potentialTargets = new LinkedList<>();
+  public FindTargetGreedyByNetworkTopology(@Nonnull StorageContainerManager scm) {
+    super(scm, FindTargetGreedyByNetworkTopology.class);
+    networkTopology = scm.getClusterMap();
+    potentialTargets = new ArrayList<>();
     setPotentialTargets(potentialTargets);
-    this.networkTopology = networkTopology;
   }
 
   /**
-   * sort potentialTargets for specified source datanode according to
-   * network topology.
+   * sort potentialTargets for specified source datanode according to network topology.
    * @param source the specified source datanode
    */
   @VisibleForTesting
-  public void sortTargetForSource(DatanodeDetails source) {
-    Collections.sort(potentialTargets,
-        (DatanodeUsageInfo da, DatanodeUsageInfo db) -> {
-        DatanodeDetails a = da.getDatanodeDetails();
-        DatanodeDetails b = db.getDatanodeDetails();
-        // sort by network topology first
-        int distanceToA = networkTopology.getDistanceCost(source, a);
-        int distanceToB = networkTopology.getDistanceCost(source, b);
-        if (distanceToA != distanceToB) {
-          return distanceToA - distanceToB;
-        }
-        // if distance to source is equal , sort by usage
-        return compareByUsage(da, db);
-      });
+  public void sortTargetForSource(@Nonnull DatanodeDetails source) {
+    potentialTargets.sort((DatanodeUsageInfo da, DatanodeUsageInfo db) -> {
+      DatanodeDetails a = da.getDatanodeDetails();
+      DatanodeDetails b = db.getDatanodeDetails();
+      // sort by network topology first
+      int distanceToA = networkTopology.getDistanceCost(source, a);
+      int distanceToB = networkTopology.getDistanceCost(source, b);
+      if (distanceToA != distanceToB) {
+        return distanceToA - distanceToB;
+      }
+      // if distance to source is equal , sort by usage
+      return compareByUsage(da, db);
+    });
   }
-
-  /**
-   * Resets the collection of target datanode usage info that will be
-   * considered for balancing. Gets the latest usage info from node manager.
-   * @param targets collection of target {@link DatanodeDetails} that
-   *                containers can move to
-   */
-  @Override
-  public void resetPotentialTargets(
-      @NotNull Collection<DatanodeDetails> targets) {
-    // create DatanodeUsageInfo from DatanodeDetails
-    List<DatanodeUsageInfo> usageInfos = new ArrayList<>(targets.size());
-    targets.forEach(datanodeDetails -> usageInfos.add(
-        getNodeManager().getUsageInfo(datanodeDetails)));
-
-    super.resetTargets(usageInfos);
-  }
-
 }

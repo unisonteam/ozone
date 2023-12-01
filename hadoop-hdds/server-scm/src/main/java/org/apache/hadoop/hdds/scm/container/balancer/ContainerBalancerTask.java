@@ -22,17 +22,10 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
-import org.apache.hadoop.hdds.scm.PlacementPolicyValidateProxy;
-import org.apache.hadoop.hdds.scm.container.ContainerID;
-import org.apache.hadoop.hdds.scm.container.ContainerInfo;
-import org.apache.hadoop.hdds.scm.container.ContainerManager;
-import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
-import org.apache.hadoop.hdds.scm.container.ContainerReplicaNotFoundException;
-import org.apache.hadoop.hdds.scm.container.placement.metrics.LongMetric;
+import org.apache.hadoop.hdds.scm.container.*;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
 import org.apache.hadoop.hdds.scm.ha.SCMContext;
-import org.apache.hadoop.hdds.scm.net.NetworkTopology;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
 import org.apache.hadoop.hdds.scm.node.NodeManager;
 import org.apache.hadoop.hdds.scm.node.states.NodeNotFoundException;
@@ -45,15 +38,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.NavigableSet;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -94,8 +79,6 @@ public class ContainerBalancerTask implements Runnable {
   private final ContainerBalancerMetrics metrics;
   private long clusterCapacity;
   private long clusterRemaining;
-  private final PlacementPolicyValidateProxy placementPolicyValidateProxy;
-  private final NetworkTopology networkTopology;
   private double upperLimit;
   private double lowerLimit;
   private ContainerBalancerSelectionCriteria selectionCriteria;
@@ -110,7 +93,7 @@ public class ContainerBalancerTask implements Runnable {
 
   private final Set<DatanodeDetails> selectedTargets;
   private final Set<DatanodeDetails> selectedSources;
-  private FindTargetStrategy findTargetStrategy;
+  private final FindTargetStrategy findTargetStrategy;
   private final FindSourceStrategy findSourceStrategy;
   private Map<ContainerMoveSelection, CompletableFuture<MoveManager.MoveResult>>
       moveSelectionToFutureMap;
@@ -136,8 +119,7 @@ public class ContainerBalancerTask implements Runnable {
     this.replicationManager = scm.getReplicationManager();
     this.moveManager = scm.getMoveManager();
     this.moveManager.setMoveTimeout(config.getMoveTimeout().toMillis());
-    this.moveManager.setReplicationTimeout(
-        config.getMoveReplicationTimeout().toMillis());
+    this.moveManager.setReplicationTimeout(config.getMoveReplicationTimeout().toMillis());
     this.delayStart = delayStart;
     this.ozoneConfiguration = scm.getConfiguration();
     this.containerBalancer = containerBalancer;
@@ -148,14 +130,13 @@ public class ContainerBalancerTask implements Runnable {
     this.underUtilizedNodes = new ArrayList<>();
     this.withinThresholdUtilizedNodes = new ArrayList<>();
     this.unBalancedNodes = new ArrayList<>();
-    this.placementPolicyValidateProxy = scm.getPlacementPolicyValidateProxy();
-    this.networkTopology = scm.getClusterMap();
     this.nextIterationIndex = nextIterationIndex;
     this.containerToSourceMap = new HashMap<>();
     this.containerToTargetMap = new HashMap<>();
     this.selectedSources = new HashSet<>();
     this.selectedTargets = new HashSet<>();
     findSourceStrategy = new FindSourceGreedy(nodeManager);
+    findTargetStrategy = FindTargetStrategyFactory.create(scm, config.getNetworkTopologyEnable());
   }
 
   /**
@@ -347,14 +328,6 @@ public class ContainerBalancerTask implements Runnable {
     double threshold = config.getThresholdAsRatio();
     this.maxDatanodesRatioToInvolvePerIteration = config.getMaxDatanodesRatioToInvolvePerIteration();
     this.maxSizeToMovePerIteration = config.getMaxSizeToMovePerIteration();
-    if (config.getNetworkTopologyEnable()) {
-      findTargetStrategy = new FindTargetGreedyByNetworkTopology(
-          containerManager, placementPolicyValidateProxy,
-          nodeManager, networkTopology);
-    } else {
-      findTargetStrategy = new FindTargetGreedyByUsageInfo(containerManager,
-          placementPolicyValidateProxy, nodeManager);
-    }
 
     // include/exclude nodes from balancing according to configs
     datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
@@ -471,7 +444,7 @@ public class ContainerBalancerTask implements Runnable {
     //TODO(jacksonyao): take withinThresholdUtilizedNodes as candidate for both
     // source and target
     List<DatanodeUsageInfo> potentialTargets = getPotentialTargets();
-    findTargetStrategy.reInitialize(potentialTargets, config, upperLimit);
+    findTargetStrategy.reInitialize(potentialTargets);
     findSourceStrategy.reInitialize(getPotentialSources(), config, lowerLimit);
 
     moveSelectionToFutureMap = new HashMap<>(unBalancedNodes.size());
@@ -693,7 +666,7 @@ public class ContainerBalancerTask implements Runnable {
     }
     ContainerMoveSelection moveSelection =
         findTargetStrategy.findTargetForContainerMove(
-            source, candidateContainers);
+            source, candidateContainers, config.getMaxSizeEnteringTarget(), upperLimit);
 
     if (moveSelection == null) {
       if (LOG.isDebugEnabled()) {
@@ -998,7 +971,7 @@ public class ContainerBalancerTask implements Runnable {
     findSourceStrategy.increaseSizeLeaving(source, size);
 
     // update sizeEnteringNode map with the recent moveSelection
-    findTargetStrategy.increaseSizeEntering(target, size);
+    findTargetStrategy.increaseSizeEntering(target, size, config.getMaxSizeEnteringTarget());
   }
 
   /**

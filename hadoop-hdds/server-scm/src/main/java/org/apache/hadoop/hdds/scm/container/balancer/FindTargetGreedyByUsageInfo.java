@@ -18,18 +18,10 @@
 
 package org.apache.hadoop.hdds.scm.container.balancer;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
-import org.apache.hadoop.hdds.scm.PlacementPolicyValidateProxy;
-import org.apache.hadoop.hdds.scm.container.ContainerManager;
-import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
-import org.apache.hadoop.hdds.scm.node.NodeManager;
-import org.jetbrains.annotations.NotNull;
-import org.slf4j.LoggerFactory;
+import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import javax.annotation.Nonnull;
 import java.util.TreeSet;
 
 /**
@@ -37,39 +29,13 @@ import java.util.TreeSet;
  * target with the lowest space usage.
  */
 public class FindTargetGreedyByUsageInfo extends AbstractFindTargetGreedy {
-  public FindTargetGreedyByUsageInfo(
-      ContainerManager containerManager,
-      PlacementPolicyValidateProxy placementPolicyValidateProxy,
-      NodeManager nodeManager) {
-    super(containerManager, placementPolicyValidateProxy, nodeManager);
-    setLogger(LoggerFactory.getLogger(FindTargetGreedyByUsageInfo.class));
-    setPotentialTargets(new TreeSet<>((a, b) -> compareByUsage(a, b)));
+  public FindTargetGreedyByUsageInfo(@Nonnull StorageContainerManager scm) {
+    super(scm, FindTargetGreedyByUsageInfo.class);
+    setPotentialTargets(new TreeSet<>(this::compareByUsage));
   }
 
-  /**
-   * do nothing , since TreeSet is ordered itself.
-   */
-  @VisibleForTesting
-  public void sortTargetForSource(DatanodeDetails source) {
-    //noop, Treeset is naturally sorted.
-    return;
-  }
-
-  /**
-   * Resets the collection of target datanode usage info that will be
-   * considered for balancing. Gets the latest usage info from node manager.
-   * @param targets collection of target {@link DatanodeDetails} that
-   *                containers can move to
-   */
   @Override
-  public void resetPotentialTargets(
-      @NotNull Collection<DatanodeDetails> targets) {
-    // create DatanodeUsageInfo from DatanodeDetails
-    List<DatanodeUsageInfo> usageInfos = new ArrayList<>(targets.size());
-    targets.forEach(datanodeDetails -> usageInfos.add(
-        getNodeManager().getUsageInfo(datanodeDetails)));
-
-    super.resetTargets(usageInfos);
+  public void sortTargetForSource(@Nonnull DatanodeDetails source) {
+    // noop, Treeset is naturally sorted.
   }
-
 }

@@ -27,18 +27,18 @@ import org.apache.hadoop.hdds.scm.net.NetworkTopologyImpl;
 import org.apache.hadoop.hdds.scm.net.NodeSchema;
 import org.apache.hadoop.hdds.scm.net.NodeSchemaManager;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
-import org.junit.jupiter.api.Test;
+import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import static org.apache.hadoop.hdds.scm.net.NetConstants.LEAF_SCHEMA;
-import static org.apache.hadoop.hdds.scm.net.NetConstants.NODEGROUP_SCHEMA;
-import static org.apache.hadoop.hdds.scm.net.NetConstants.RACK_SCHEMA;
-import static org.apache.hadoop.hdds.scm.net.NetConstants.ROOT_SCHEMA;
+import static org.apache.hadoop.hdds.scm.net.NetConstants.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
 
 /**
  * Tests for all the implementations of FindTargetStrategy.
@@ -48,10 +48,11 @@ public class TestFindTargetStrategy {
    * Checks whether FindTargetGreedyByUsage always choose target
    * for a given source by Usage.
    */
-  @Test
+    @Test
   public void testFindTargetGreedyByUsage() {
+    StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
     FindTargetGreedyByUsageInfo findTargetStrategyByUsageInfo =
-        new FindTargetGreedyByUsageInfo(null, null, null);
+        new FindTargetGreedyByUsageInfo(scm);
     List<DatanodeUsageInfo> overUtilizedDatanodes = new ArrayList<>();
 
     //create three datanodes with different usageinfo
@@ -67,7 +68,7 @@ public class TestFindTargetStrategy {
     overUtilizedDatanodes.add(dui2);
     overUtilizedDatanodes.add(dui3);
     findTargetStrategyByUsageInfo.reInitialize(
-        overUtilizedDatanodes, null, null);
+        overUtilizedDatanodes);
 
     //no need to set the datanode usage for source.
     findTargetStrategyByUsageInfo.sortTargetForSource(
@@ -110,9 +111,11 @@ public class TestFindTargetStrategy {
     potentialTargets.add(dui3);
     MockNodeManager mockNodeManager = new MockNodeManager(potentialTargets);
 
-    FindTargetGreedyByUsageInfo findTargetGreedyByUsageInfo =
-        new FindTargetGreedyByUsageInfo(null, null, mockNodeManager);
-    findTargetGreedyByUsageInfo.reInitialize(potentialTargets, null, null);
+    StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
+    when(scm.getScmNodeManager()).thenReturn(mockNodeManager);
+
+    FindTargetGreedyByUsageInfo findTargetGreedyByUsageInfo = new FindTargetGreedyByUsageInfo(scm);
+    findTargetGreedyByUsageInfo.reInitialize(potentialTargets);
 
     // now, reset potential targets to only the first datanode
     List<DatanodeDetails> newPotentialTargets = new ArrayList<>(1);
@@ -192,13 +195,13 @@ public class TestFindTargetStrategy {
     overUtilizedDatanodes.add(
         new DatanodeUsageInfo(target1, new SCMNodeStat(100, 0, 10)));
 
+    StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
+    when(scm.getClusterMap()).thenReturn(newCluster);
 
-    FindTargetGreedyByNetworkTopology findTargetGreedyByNetworkTopology =
-        new FindTargetGreedyByNetworkTopology(
-            null, null, null, newCluster);
+    FindTargetGreedyByNetworkTopology findTargetGreedyByNetworkTopology = new FindTargetGreedyByNetworkTopology(scm);
 
     findTargetGreedyByNetworkTopology.reInitialize(
-        overUtilizedDatanodes, null, null);
+        overUtilizedDatanodes);
 
     findTargetGreedyByNetworkTopology.sortTargetForSource(source);
 
