@@ -84,7 +84,7 @@ public class ContainerBalancerTask implements Runnable {
   private final Set<DatanodeDetails> selectedSources;
   private final FindTargetStrategy findTargetStrategy;
   private final FindSourceStrategy findSourceStrategy;
-  private Map<ContainerMoveSelection, CompletableFuture<MoveManager.MoveResult>> moveSelectionToFutureMap;
+  private final ArrayList<MoveState> moveStateList;
   private final IterationState iterationState;
   private final boolean delayStart;
 
@@ -128,6 +128,7 @@ public class ContainerBalancerTask implements Runnable {
     selectionCriteria = new ContainerBalancerSelectionCriteria(config,
         nodeManager, replicationManager, containerManager, findSourceStrategy);
     iterationState = new IterationState(nextIterationIndex);
+    moveStateList = new ArrayList<>();
   }
 
   /**
@@ -411,7 +412,6 @@ public class ContainerBalancerTask implements Runnable {
     findTargetStrategy.reInitialize(potentialTargets);
     findSourceStrategy.reInitialize(getPotentialSources(), config, it.lowerLimit);
 
-    moveSelectionToFutureMap = new HashMap<>(unBalancedNodes.size());
     boolean isMoveGeneratedInThisIteration = false;
     boolean canAdaptWhenNearingLimits = true;
     boolean canAdaptOnReachingLimits = true;
@@ -515,10 +515,13 @@ public class ContainerBalancerTask implements Runnable {
   /**
    * Checks the results of all move operations when exiting an iteration.
    */
+  @SuppressWarnings("rawtypes")
   private void checkIterationMoveResults() {
-    CompletableFuture<Void> allFuturesResult = CompletableFuture.allOf(
-        moveSelectionToFutureMap.values()
-            .toArray(new CompletableFuture[moveSelectionToFutureMap.size()]));
+    CompletableFuture[] futureArray = new CompletableFuture[moveStateList.size()];
+    for (int i = 0; i < moveStateList.size(); ++i) {
+      futureArray[i] = moveStateList.get(i).result;
+    }
+    CompletableFuture<Void> allFuturesResult = CompletableFuture.allOf(futureArray);
     try {
       allFuturesResult.get(config.getMoveTimeout().toMillis(), TimeUnit.MILLISECONDS);
     } catch (InterruptedException e) {
@@ -559,27 +562,19 @@ public class ContainerBalancerTask implements Runnable {
    * cancelled.
    */
   private long cancelMovesThatExceedTimeoutDuration() {
-    Set<Map.Entry<ContainerMoveSelection,
-        CompletableFuture<MoveManager.MoveResult>>>
-        entries = moveSelectionToFutureMap.entrySet();
-    Iterator<Map.Entry<ContainerMoveSelection,
-        CompletableFuture<MoveManager.MoveResult>>>
-        iterator = entries.iterator();
-
     int numCancelled = 0;
     // iterate through all moves and cancel ones that aren't done yet
-    while (iterator.hasNext()) {
-      Map.Entry<ContainerMoveSelection,
-          CompletableFuture<MoveManager.MoveResult>>
-          entry = iterator.next();
-      if (!entry.getValue().isDone()) {
-        LOG.warn("Container move timed out for container {} from source {}" +
-                " to target {}.", entry.getKey().getContainerID(),
-            containerToSourceMap.get(entry.getKey().getContainerID())
-                                .getUuidString(),
-            entry.getKey().getTargetNode().getUuidString());
+    for (MoveState state : moveStateList) {
+      CompletableFuture<MoveManager.MoveResult> future = state.result;
+      if (!future.isDone()) {
+        ContainerMoveSelection moveSelection = state.moveSelection;
+        LOG.warn("Container move timed out for container {} from source {} to target {}.",
+            moveSelection.getContainerID(),
+            containerToSourceMap.get(moveSelection.getContainerID()).getUuidString(),
+            moveSelection.getTargetNode().getUuidString()
+        );
 
-        entry.getValue().cancel(true);
+        future.cancel(true);
         numCancelled += 1;
       }
     }
@@ -770,11 +765,11 @@ public class ContainerBalancerTask implements Runnable {
         return false;
       } else {
         MoveManager.MoveResult result = future.join();
-        moveSelectionToFutureMap.put(moveSelection, future);
+        moveStateList.add(new MoveState(moveSelection, future));
         return result == MoveManager.MoveResult.COMPLETED;
       }
     } else {
-      moveSelectionToFutureMap.put(moveSelection, future);
+      moveStateList.add(new MoveState(moveSelection, future));
       return true;
     }
   }
@@ -1000,6 +995,16 @@ public class ContainerBalancerTask implements Runnable {
         "%-30s %s%n" +
         "%-30s %b%n", "Key", "Value", "Running", isBalancerRunning());
     return status + config.toString();
+  }
+
+  private static class MoveState {
+    private final ContainerMoveSelection moveSelection;
+    private final CompletableFuture<MoveManager.MoveResult> result;
+
+    public MoveState(ContainerMoveSelection moveSelection, CompletableFuture<MoveManager.MoveResult> future) {
+      this.moveSelection = moveSelection;
+      this.result = future;
+    }
   }
 
   private static class IterationState {
