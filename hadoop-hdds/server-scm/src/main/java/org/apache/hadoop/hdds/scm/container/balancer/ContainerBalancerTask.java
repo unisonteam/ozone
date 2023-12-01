@@ -329,15 +329,13 @@ public class ContainerBalancerTask implements Runnable {
       SCMNodeStat scmNodeStat = datanodeUsageInfo.getScmNodeStat();
       Long capacity = scmNodeStat.getCapacity().get();
 
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Utilization for node {} with capacity {}B, used {}B, and " +
-                "remaining {}B is {}",
-            datanodeUsageInfo.getDatanodeDetails().getUuidString(),
-            capacity,
-            scmNodeStat.getScmUsed().get(),
-            scmNodeStat.getRemaining().get(),
-            utilization);
-      }
+      LOG.debug("Utilization for node {} with capacity {}B, used {}B, and " +
+              "remaining {}B is {}",
+          datanodeUsageInfo.getDatanodeDetails().getUuidString(),
+          capacity,
+          scmNodeStat.getScmUsed().get(),
+          scmNodeStat.getRemaining().get(),
+          utilization);
       if (Double.compare(utilization, it.upperLimit) > 0) {
         overUtilizedNodes.add(datanodeUsageInfo);
         metrics.incrementNumDatanodesUnbalanced(1);
@@ -595,26 +593,17 @@ public class ContainerBalancerTask implements Runnable {
         selectionCriteria.getCandidateContainers(source, sizeScheduledForMoveInLatestIteration);
 
     if (candidateContainers.isEmpty()) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("ContainerBalancer could not find any candidate containers " +
-            "for datanode {}", source.getUuidString());
-      }
+      LOG.debug("ContainerBalancer could not find any candidate containers for datanode {}", source.getUuidString());
       return null;
     }
 
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("ContainerBalancer is finding suitable target for source " +
-          "datanode {}", source.getUuidString());
-    }
+    LOG.debug("ContainerBalancer is finding suitable target for source datanode {}", source.getUuidString());
     ContainerMoveSelection moveSelection =
         findTargetStrategy.findTargetForContainerMove(
             source, candidateContainers, config.getMaxSizeEnteringTarget(), it.upperLimit);
 
     if (moveSelection == null) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("ContainerBalancer could not find a suitable target for " +
-            "source node {}.", source.getUuidString());
-      }
+      LOG.debug("ContainerBalancer could not find a suitable target for source node {}.", source.getUuidString());
       return null;
     }
     LOG.info("ContainerBalancer matched source datanode {} with target " +
