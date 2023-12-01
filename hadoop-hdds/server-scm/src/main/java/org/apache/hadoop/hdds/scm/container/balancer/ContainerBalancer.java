@@ -42,17 +42,15 @@ public class ContainerBalancer extends StatefulService {
 
   private static final AtomicInteger ID = new AtomicInteger();
 
-  public static final Logger LOG =
-      LoggerFactory.getLogger(ContainerBalancer.class);
-
-  private StorageContainerManager scm;
+  public static final Logger LOG = LoggerFactory.getLogger(ContainerBalancer.class);
+  private final StorageContainerManager scm;
   private final SCMContext scmContext;
-  private OzoneConfiguration ozoneConfiguration;
+  private final OzoneConfiguration ozoneConfiguration;
   private ContainerBalancerConfiguration config;
-  private ContainerBalancerMetrics metrics;
+  private final ContainerBalancerMetrics metrics;
   private volatile Thread currentBalancingThread;
   private volatile ContainerBalancerTask task = null;
-  private ReentrantLock lock;
+  private final ReentrantLock lock;
 
   /**
    * Constructs ContainerBalancer with the specified arguments. Initializes
@@ -269,8 +267,7 @@ public class ContainerBalancer extends StatefulService {
   /**
    * Starts a new balancing thread asynchronously.
    */
-  private void startBalancingThread(int nextIterationIndex,
-      boolean delayStart) {
+  private void startBalancingThread(int nextIterationIndex, boolean delayStart) {
     String prefix = scmContext.threadNamePrefix();
     task = new ContainerBalancerTask(scm, nextIterationIndex, this, config, delayStart);
     Thread thread = new Thread(task);

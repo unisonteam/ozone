@@ -238,7 +238,7 @@ public class TestContainerBalancerTask {
 
     // should be equal to average utilization of the cluster
     Assertions.assertEquals(averageUtilization,
-        task.calculateAvgUtilization(nodesInCluster), 0.0001);
+        ContainerBalanceIteration.calculateAvgUtilization(nodesInCluster), 0.0001);
   }
 
   /**

@@ -53,8 +53,7 @@ import static org.apache.hadoop.hdds.HddsConfigKeys.HDDS_NODE_REPORT_INTERVAL_DE
  */
 public class ContainerBalancerTask implements Runnable {
 
-  public static final Logger LOG =
-      LoggerFactory.getLogger(ContainerBalancerTask.class);
+  public static final Logger LOG = LoggerFactory.getLogger(ContainerBalancerTask.class);
 
   private final NodeManager nodeManager;
   private final ContainerManager containerManager;
@@ -63,9 +62,7 @@ public class ContainerBalancerTask implements Runnable {
   private final OzoneConfiguration ozoneConfiguration;
   private final ContainerBalancer containerBalancer;
   private final SCMContext scmContext;
-  private int totalNodesInCluster;
-  private double maxDatanodesRatioToInvolvePerIteration;
-  private long maxSizeToMovePerIteration;
+  private final StorageContainerManager scm;
   private int countDatanodesInvolvedPerIteration;
   private long sizeScheduledForMoveInLatestIteration;
   // count actual size moved in bytes
@@ -77,11 +74,7 @@ public class ContainerBalancerTask implements Runnable {
 
   private final ContainerBalancerConfiguration config;
   private final ContainerBalancerMetrics metrics;
-  private long clusterCapacity;
-  private long clusterRemaining;
-  private double upperLimit;
-  private double lowerLimit;
-  private ContainerBalancerSelectionCriteria selectionCriteria;
+  private final ContainerBalancerSelectionCriteria selectionCriteria;
   private volatile Status taskStatus = Status.RUNNING;
 
   /*
@@ -113,7 +106,9 @@ public class ContainerBalancerTask implements Runnable {
                                int nextIterationIndex,
                                ContainerBalancer containerBalancer,
                                ContainerBalancerConfiguration config,
-                               boolean delayStart) {
+                               boolean delayStart)
+  {
+    this.scm = scm;
     this.nodeManager = scm.getScmNodeManager();
     this.containerManager = scm.getContainerManager();
     this.replicationManager = scm.getReplicationManager();
@@ -137,6 +132,8 @@ public class ContainerBalancerTask implements Runnable {
     this.selectedTargets = new HashSet<>();
     findSourceStrategy = new FindSourceGreedy(nodeManager);
     findTargetStrategy = FindTargetStrategyFactory.create(scm, config.getNetworkTopologyEnable());
+    selectionCriteria = new ContainerBalancerSelectionCriteria(config,
+        nodeManager, replicationManager, containerManager, findSourceStrategy);
   }
 
   /**
@@ -149,8 +146,7 @@ public class ContainerBalancerTask implements Runnable {
             HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT,
             HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT_DEFAULT,
             TimeUnit.SECONDS);
-        LOG.info("ContainerBalancer will sleep for {} seconds before starting" +
-            " balancing.", delayDuration);
+        LOG.info("ContainerBalancer will sleep for {} seconds before starting balancing.", delayDuration);
         Thread.sleep(Duration.ofSeconds(delayDuration).toMillis());
       }
       balance();
@@ -218,8 +214,23 @@ public class ContainerBalancerTask implements Runnable {
         return;
       }
 
+      if (scmIsNotReady()) {
+        return;
+      }
+      // sorted list in order from most to least used
+      List<DatanodeUsageInfo> datanodeUsageInfos = nodeManager.getMostOrLeastUsedDatanodes(true);
+      if (datanodeUsageInfos.isEmpty()) {
+        LOG.warn("Received an empty list of datanodes from Node Manager when " +
+            "trying to identify which nodes to balance");
+        return;
+      }
+      // include/exclude nodes from balancing according to configs
+      datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
+
+      ContainerBalanceIteration it = new ContainerBalanceIteration(config, scm, datanodeUsageInfos);
+
       // initialize this iteration. stop balancing on initialization failure
-      if (!initializeIteration()) {
+      if (!initializeIteration(datanodeUsageInfos, it)) {
         // just return if the reason for initialization failure is that
         // balancer has been stopped in another thread
         if (!isBalancerRunning()) {
@@ -231,7 +242,7 @@ public class ContainerBalancerTask implements Runnable {
         return;
       }
 
-      IterationResult iR = doIteration();
+      IterationResult iR = doIteration(it);
       metrics.incrementNumIterations(1);
       LOG.info("Result of this iteration of Container Balancer: {}", iR);
 
@@ -313,45 +324,7 @@ public class ContainerBalancerTask implements Runnable {
    *
    * @return true if successfully initialized, otherwise false.
    */
-  private boolean initializeIteration() {
-    if (scmIsNotReady()) {
-      return false;
-    }
-    // sorted list in order from most to least used
-    List<DatanodeUsageInfo> datanodeUsageInfos = nodeManager.getMostOrLeastUsedDatanodes(true);
-    if (datanodeUsageInfos.isEmpty()) {
-      LOG.warn("Received an empty list of datanodes from Node Manager when " +
-          "trying to identify which nodes to balance");
-      return false;
-    }
-
-    double threshold = config.getThresholdAsRatio();
-    this.maxDatanodesRatioToInvolvePerIteration = config.getMaxDatanodesRatioToInvolvePerIteration();
-    this.maxSizeToMovePerIteration = config.getMaxSizeToMovePerIteration();
-
-    // include/exclude nodes from balancing according to configs
-    datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
-
-    this.totalNodesInCluster = datanodeUsageInfos.size();
-
-    double clusterAvgUtilisation = calculateAvgUtilization(datanodeUsageInfos);
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Average utilization of the cluster is {}",
-          clusterAvgUtilisation);
-    }
-
-    // over utilized nodes have utilization(that is, used / capacity) greater
-    // than upper limit
-    this.upperLimit = clusterAvgUtilisation + threshold;
-    // under utilized nodes have utilization(that is, used / capacity) less
-    // than lower limit
-    this.lowerLimit = clusterAvgUtilisation - threshold;
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Lower limit for utilization is {} and Upper limit for " +
-          "utilization is {}", lowerLimit, upperLimit);
-    }
-
+  private boolean initializeIteration(List<DatanodeUsageInfo> datanodeUsageInfos, ContainerBalanceIteration it) {
     long totalOverUtilizedBytes = 0L, totalUnderUtilizedBytes = 0L;
     // find over and under utilized nodes
     for (DatanodeUsageInfo datanodeUsageInfo : datanodeUsageInfos) {
@@ -371,19 +344,19 @@ public class ContainerBalancerTask implements Runnable {
             scmNodeStat.getRemaining().get(),
             utilization);
       }
-      if (Double.compare(utilization, upperLimit) > 0) {
+      if (Double.compare(utilization, it.upperLimit) > 0) {
         overUtilizedNodes.add(datanodeUsageInfo);
         metrics.incrementNumDatanodesUnbalanced(1);
 
         // amount of bytes greater than upper limit in this node
-        long overUtilizedBytes = ratioToBytes(capacity, utilization) - ratioToBytes(capacity, upperLimit);
+        long overUtilizedBytes = ratioToBytes(capacity, utilization) - ratioToBytes(capacity, it.upperLimit);
         totalOverUtilizedBytes += overUtilizedBytes;
-      } else if (Double.compare(utilization, lowerLimit) < 0) {
+      } else if (Double.compare(utilization, it.lowerLimit) < 0) {
         underUtilizedNodes.add(datanodeUsageInfo);
         metrics.incrementNumDatanodesUnbalanced(1);
 
         // amount of bytes lesser than lower limit in this node
-        long underUtilizedBytes = ratioToBytes(capacity, lowerLimit) - ratioToBytes(capacity, utilization);
+        long underUtilizedBytes = ratioToBytes(capacity, it.lowerLimit) - ratioToBytes(capacity, utilization);
         totalUnderUtilizedBytes += underUtilizedBytes;
       } else {
         withinThresholdUtilizedNodes.add(datanodeUsageInfo);
@@ -421,8 +394,6 @@ public class ContainerBalancerTask implements Runnable {
       });
     }
 
-    selectionCriteria = new ContainerBalancerSelectionCriteria(config,
-        nodeManager, replicationManager, containerManager, findSourceStrategy);
     return true;
   }
 
@@ -438,14 +409,14 @@ public class ContainerBalancerTask implements Runnable {
     return false;
   }
 
-  private IterationResult doIteration() {
+  private IterationResult doIteration(ContainerBalanceIteration it) {
     // note that potential and selected targets are updated in the following
     // loop
     //TODO(jacksonyao): take withinThresholdUtilizedNodes as candidate for both
     // source and target
     List<DatanodeUsageInfo> potentialTargets = getPotentialTargets();
     findTargetStrategy.reInitialize(potentialTargets);
-    findSourceStrategy.reInitialize(getPotentialSources(), config, lowerLimit);
+    findSourceStrategy.reInitialize(getPotentialSources(), config, it.lowerLimit);
 
     moveSelectionToFutureMap = new HashMap<>(unBalancedNodes.size());
     boolean isMoveGeneratedInThisIteration = false;
@@ -461,7 +432,7 @@ public class ContainerBalancerTask implements Runnable {
       }
 
       // break out if we've reached max size to move limit
-      if (reachedMaxSizeToMovePerIteration()) {
+      if (reachedMaxSizeToMovePerIteration(it)) {
         break;
       }
 
@@ -469,13 +440,13 @@ public class ContainerBalancerTask implements Runnable {
        involve, take some action in adaptWhenNearingIterationLimits()
       */
       if (canAdaptWhenNearingLimits) {
-        if (adaptWhenNearingIterationLimits()) {
+        if (adaptWhenNearingIterationLimits(it)) {
           canAdaptWhenNearingLimits = false;
         }
       }
       if (canAdaptOnReachingLimits) {
         // check if balancer has hit the iteration limits and take some action
-        if (adaptOnReachingIterationLimits()) {
+        if (adaptOnReachingIterationLimits(it)) {
           canAdaptOnReachingLimits = false;
           canAdaptWhenNearingLimits = false;
         }
@@ -487,7 +458,7 @@ public class ContainerBalancerTask implements Runnable {
         break;
       }
 
-      ContainerMoveSelection moveSelection = matchSourceWithTarget(source);
+      ContainerMoveSelection moveSelection = matchSourceWithTarget(source, it);
       if (moveSelection != null) {
         if (processMoveSelection(source, moveSelection)) {
           isMoveGeneratedInThisIteration = true;
@@ -647,7 +618,7 @@ public class ContainerBalancerTask implements Runnable {
    *
    * @return ContainerMoveSelection containing the selected target and container
    */
-  private ContainerMoveSelection matchSourceWithTarget(DatanodeDetails source) {
+  private ContainerMoveSelection matchSourceWithTarget(DatanodeDetails source, ContainerBalanceIteration it) {
     NavigableSet<ContainerID> candidateContainers =
         selectionCriteria.getCandidateContainers(source,
             sizeScheduledForMoveInLatestIteration);
@@ -666,7 +637,7 @@ public class ContainerBalancerTask implements Runnable {
     }
     ContainerMoveSelection moveSelection =
         findTargetStrategy.findTargetForContainerMove(
-            source, candidateContainers, config.getMaxSizeEnteringTarget(), upperLimit);
+            source, candidateContainers, config.getMaxSizeEnteringTarget(), it.upperLimit);
 
     if (moveSelection == null) {
       if (LOG.isDebugEnabled()) {
@@ -682,13 +653,13 @@ public class ContainerBalancerTask implements Runnable {
     return moveSelection;
   }
 
-  private boolean reachedMaxSizeToMovePerIteration() {
+  private boolean reachedMaxSizeToMovePerIteration(ContainerBalanceIteration it) {
     // since candidate containers in ContainerBalancerSelectionCriteria are
     // filtered out according to this limit, balancer should not have crossed it
-    if (sizeScheduledForMoveInLatestIteration >= maxSizeToMovePerIteration) {
+    if (sizeScheduledForMoveInLatestIteration >= it.maxSizeToMovePerIteration) {
       LOG.warn("Reached max size to move limit. {} bytes have already been" +
               " scheduled for balancing and the limit is {} bytes.",
-          sizeScheduledForMoveInLatestIteration, maxSizeToMovePerIteration);
+          sizeScheduledForMoveInLatestIteration, it.maxSizeToMovePerIteration);
       return true;
     }
     return false;
@@ -700,9 +671,9 @@ public class ContainerBalancerTask implements Runnable {
    * "datanodes.involved.max.percentage.per.iteration" limit.
    * @return true if potential targets were restricted, else false
    */
-  private boolean adaptWhenNearingIterationLimits() {
+  private boolean adaptWhenNearingIterationLimits(ContainerBalanceIteration it) {
     // check if we're nearing max datanodes to involve
-    int maxDatanodesToInvolve = (int) (maxDatanodesRatioToInvolvePerIteration * totalNodesInCluster);
+    int maxDatanodesToInvolve = (int) (it.maxDatanodesRatioToInvolvePerIteration * it.totalNodesInCluster);
     if (countDatanodesInvolvedPerIteration + 1 == maxDatanodesToInvolve) {
       /* We're one datanode away from reaching the limit. Restrict potential
       targets to targets that have already been selected.
@@ -726,10 +697,9 @@ public class ContainerBalancerTask implements Runnable {
    * "datanodes.involved.max.percentage.per.iteration" limit.
    * @return true if potential sources and targets were restricted, else false
    */
-  private boolean adaptOnReachingIterationLimits() {
+  private boolean adaptOnReachingIterationLimits(ContainerBalanceIteration it) {
     // check if we've reached max datanodes to involve limit
-    int maxDatanodesToInvolve =
-        (int) (maxDatanodesRatioToInvolvePerIteration * totalNodesInCluster);
+    int maxDatanodesToInvolve = (int) (it.maxDatanodesRatioToInvolvePerIteration * it.totalNodesInCluster);
     if (countDatanodesInvolvedPerIteration == maxDatanodesToInvolve) {
       // restrict both to already selected sources and targets
       findTargetStrategy.resetPotentialTargets(selectedTargets);
@@ -873,31 +843,6 @@ public class ContainerBalancerTask implements Runnable {
   }
 
   /**
-   * Calculates the average utilization for the specified nodes.
-   * Utilization is (capacity - remaining) divided by capacity.
-   *
-   * @param nodes List of DatanodeUsageInfo to find the average utilization for
-   * @return Average utilization value
-   */
-  @VisibleForTesting
-  double calculateAvgUtilization(List<DatanodeUsageInfo> nodes) {
-    if (nodes.size() == 0) {
-      LOG.warn("No nodes to calculate average utilization for in " +
-          "ContainerBalancer.");
-      return 0;
-    }
-    SCMNodeStat aggregatedStats = new SCMNodeStat(
-        0, 0, 0);
-    for (DatanodeUsageInfo node : nodes) {
-      aggregatedStats.add(node.getScmNodeStat());
-    }
-    clusterCapacity = aggregatedStats.getCapacity().get();
-    clusterRemaining = aggregatedStats.getRemaining().get();
-
-    return (clusterCapacity - clusterRemaining) / (double) clusterCapacity;
-  }
-
-  /**
    * Get potential targets for container move. Potential targets are under
    * utilized and within threshold utilized nodes.
    *
@@ -979,8 +924,6 @@ public class ContainerBalancerTask implements Runnable {
    */
   private void resetState() {
     moveManager.resetState();
-    this.clusterCapacity = 0L;
-    this.clusterRemaining = 0L;
     this.overUtilizedNodes.clear();
     this.underUtilizedNodes.clear();
     this.unBalancedNodes.clear();
@@ -1085,7 +1028,7 @@ public class ContainerBalancerTask implements Runnable {
   }
 
   /**
-   * The result of {@link ContainerBalancerTask#doIteration()}.
+   * The result of {@link ContainerBalancerTask#doIteration(ContainerBalanceIteration)}.
    */
   enum IterationResult {
     ITERATION_COMPLETED,
