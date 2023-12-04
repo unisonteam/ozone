@@ -19,6 +19,7 @@
 package org.apache.hadoop.hdds.scm.container.balancer;
 
 import com.google.protobuf.ByteString;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -59,8 +60,7 @@ public class TestContainerBalancer {
   private ContainerBalancer containerBalancer;
   private StorageContainerManager scm;
   private ContainerBalancerConfiguration balancerConfiguration;
-  private Map<String, ByteString> serviceToConfigMap = new HashMap<>();
-  private StatefulServiceStateManager serviceStateManager;
+  private final Map<String, ByteString> serviceToConfigMap = new HashMap<>();
   private OzoneConfiguration conf;
 
   /**
@@ -74,7 +74,8 @@ public class TestContainerBalancer {
         5, TimeUnit.SECONDS);
     conf.setTimeDuration(HDDS_NODE_REPORT_INTERVAL, 2, TimeUnit.SECONDS);
     scm = Mockito.mock(StorageContainerManager.class);
-    serviceStateManager = Mockito.mock(StatefulServiceStateManagerImpl.class);
+    StatefulServiceStateManager serviceStateManager =
+        Mockito.mock(StatefulServiceStateManagerImpl.class);
     balancerConfiguration =
         conf.getObject(ContainerBalancerConfiguration.class);
     balancerConfiguration.setThreshold(10);
@@ -186,20 +187,20 @@ public class TestContainerBalancer {
     containerBalancer.startBalancer(balancerConfiguration);
 
     scm.getScmContext().updateLeaderAndTerm(false, 1);
-    Assertions.assertTrue(containerBalancer.getBalancerStatus()
-        == ContainerBalancerTask.Status.RUNNING);
+    Assertions.assertSame(containerBalancer.getBalancerStatus(),
+        ContainerBalancerTask.Status.RUNNING);
     containerBalancer.notifyStatusChanged();
-    Assertions.assertTrue(containerBalancer.getBalancerStatus()
-        == ContainerBalancerTask.Status.STOPPED);
+    Assertions.assertSame(containerBalancer.getBalancerStatus(),
+        ContainerBalancerTask.Status.STOPPED);
     scm.getScmContext().updateLeaderAndTerm(true, 2);
     scm.getScmContext().setLeaderReady();
     containerBalancer.notifyStatusChanged();
-    Assertions.assertTrue(containerBalancer.getBalancerStatus()
-        == ContainerBalancerTask.Status.RUNNING);
+    Assertions.assertSame(containerBalancer.getBalancerStatus(),
+        ContainerBalancerTask.Status.RUNNING);
 
     containerBalancer.stop();
-    Assertions.assertTrue(containerBalancer.getBalancerStatus()
-        == ContainerBalancerTask.Status.STOPPED);
+    Assertions.assertSame(containerBalancer.getBalancerStatus(),
+        ContainerBalancerTask.Status.STOPPED);
   }
 
   /**
@@ -276,7 +277,7 @@ public class TestContainerBalancer {
 
   private void startBalancer(ContainerBalancerConfiguration config)
       throws IllegalContainerBalancerStateException, IOException,
-      InvalidContainerBalancerConfigurationException, TimeoutException {
+      InvalidContainerBalancerConfigurationException {
     containerBalancer.startBalancer(config);
   }
 

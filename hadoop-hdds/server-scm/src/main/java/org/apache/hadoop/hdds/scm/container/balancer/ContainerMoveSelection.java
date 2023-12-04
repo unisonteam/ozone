@@ -20,17 +20,20 @@ package org.apache.hadoop.hdds.scm.container.balancer;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.scm.container.ContainerID;
 
+import javax.annotation.Nonnull;
+
 /**
  * This class represents a target datanode and the container to be moved from
  * a source to that target.
  */
 public class ContainerMoveSelection {
-  private DatanodeDetails targetNode;
-  private ContainerID containerID;
+  private final DatanodeDetails targetNode;
+  private final ContainerID containerID;
 
   public ContainerMoveSelection(
-      DatanodeDetails targetNode,
-      ContainerID containerID) {
+      @Nonnull DatanodeDetails targetNode,
+      @Nonnull ContainerID containerID
+  ) {
     this.targetNode = targetNode;
     this.containerID = containerID;
   }
@@ -39,17 +42,7 @@ public class ContainerMoveSelection {
     return targetNode;
   }
 
-  public void setTargetNode(
-      DatanodeDetails targetNode) {
-    this.targetNode = targetNode;
-  }
-
   public ContainerID getContainerID() {
     return containerID;
-  }
-
-  public void setContainerID(
-      ContainerID containerID) {
-    this.containerID = containerID;
   }
 }

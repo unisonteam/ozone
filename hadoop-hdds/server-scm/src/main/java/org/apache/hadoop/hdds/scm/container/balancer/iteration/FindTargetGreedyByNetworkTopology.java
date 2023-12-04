@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hdds.scm.container.balancer;
+package org.apache.hadoop.hdds.scm.container.balancer.iteration;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
@@ -32,11 +32,13 @@ import java.util.ArrayList;
  * target with the shortest distance according to network topology
  * distance to the give source datanode.
  */
-public class FindTargetGreedyByNetworkTopology extends AbstractFindTargetGreedy {
+class FindTargetGreedyByNetworkTopology extends AbstractFindTargetGreedy {
   private final NetworkTopology networkTopology;
   private final ArrayList<DatanodeUsageInfo> potentialTargets;
 
-  public FindTargetGreedyByNetworkTopology(@Nonnull StorageContainerManager scm) {
+  FindTargetGreedyByNetworkTopology(
+      @Nonnull StorageContainerManager scm
+  ) {
     super(scm, FindTargetGreedyByNetworkTopology.class);
     networkTopology = scm.getClusterMap();
     potentialTargets = new ArrayList<>();
@@ -44,7 +46,9 @@ public class FindTargetGreedyByNetworkTopology extends AbstractFindTargetGreedy 
   }
 
   /**
-   * sort potentialTargets for specified source datanode according to network topology.
+   * Sort potentialTargets for specified source datanode according to network
+   * topology.
+   *
    * @param source the specified source datanode
    */
   @VisibleForTesting

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hdds.scm.container.balancer;
+package org.apache.hadoop.hdds.scm.container.balancer.iteration;
 
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
@@ -28,8 +28,8 @@ import java.util.TreeSet;
  * an implementation of FindTargetGreedy, which will always select the
  * target with the lowest space usage.
  */
-public class FindTargetGreedyByUsageInfo extends AbstractFindTargetGreedy {
-  public FindTargetGreedyByUsageInfo(@Nonnull StorageContainerManager scm) {
+class FindTargetGreedyByUsageInfo extends AbstractFindTargetGreedy {
+  FindTargetGreedyByUsageInfo(@Nonnull StorageContainerManager scm) {
     super(scm, FindTargetGreedyByUsageInfo.class);
     setPotentialTargets(new TreeSet<>(this::compareByUsage));
   }

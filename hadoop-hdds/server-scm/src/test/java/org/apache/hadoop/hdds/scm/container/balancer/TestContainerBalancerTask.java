@@ -36,6 +36,7 @@ import org.apache.hadoop.hdds.scm.container.ContainerManager;
 import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
 import org.apache.hadoop.hdds.scm.container.ContainerReplica;
 import org.apache.hadoop.hdds.scm.container.MockNodeManager;
+import org.apache.hadoop.hdds.scm.container.balancer.iteration.ContainerBalanceIteration;
 import org.apache.hadoop.hdds.scm.container.placement.algorithms.ContainerPlacementPolicyFactory;
 import org.apache.hadoop.hdds.scm.container.placement.algorithms.SCMContainerPlacementMetrics;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
@@ -62,6 +63,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.event.Level;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
@@ -89,7 +91,8 @@ import static org.mockito.Mockito.when;
  * Tests for {@link ContainerBalancer}.
  */
 public class TestContainerBalancerTask {
-  private static final Logger LOG = LoggerFactory.getLogger(TestContainerBalancerTask.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(TestContainerBalancerTask.class);
 
   private ReplicationManager replicationManager;
   private MoveManager moveManager;
@@ -105,9 +108,11 @@ public class TestContainerBalancerTask {
   private List<Double> nodeUtilizations;
   private double averageUtilization;
   private int numberOfNodes;
-  private final Map<ContainerID, Set<ContainerReplica>> cidToReplicasMap = new HashMap<>();
+  private final Map<ContainerID, Set<ContainerReplica>> cidToReplicasMap =
+      new HashMap<>();
   private final Map<ContainerID, ContainerInfo> cidToInfoMap = new HashMap<>();
-  private final Map<DatanodeUsageInfo, Set<ContainerID>> datanodeToContainersMap = new HashMap<>();
+  private final Map<DatanodeUsageInfo, Set<ContainerID>>
+      datanodeToContainersMap = new HashMap<>();
   private final Map<String, ByteString> serviceToConfigMap = new HashMap<>();
   private static final ThreadLocalRandom RANDOM = ThreadLocalRandom.current();
 
@@ -117,13 +122,15 @@ public class TestContainerBalancerTask {
    * Sets up configuration values and creates a mock cluster.
    */
   @BeforeEach
-  public void setup() throws IOException, NodeNotFoundException, TimeoutException {
+  public void setup()
+      throws IOException, NodeNotFoundException, TimeoutException {
     conf = new OzoneConfiguration();
     rmConf = new ReplicationManagerConfiguration();
     scm = Mockito.mock(StorageContainerManager.class);
     containerManager = Mockito.mock(ContainerManager.class);
     replicationManager = Mockito.mock(ReplicationManager.class);
-    StatefulServiceStateManager serviceStateManager = Mockito.mock(StatefulServiceStateManagerImpl.class);
+    StatefulServiceStateManager serviceStateManager =
+        Mockito.mock(StatefulServiceStateManagerImpl.class);
     SCMServiceManager scmServiceManager = Mockito.mock(SCMServiceManager.class);
     moveManager = Mockito.mock(MoveManager.class);
     Mockito.when(moveManager.move(any(ContainerID.class),
@@ -159,8 +166,9 @@ public class TestContainerBalancerTask {
     ecPlacementPolicy = ContainerPlacementPolicyFactory.getECPolicy(
         conf, mockNodeManager, clusterMap,
         true, SCMContainerPlacementMetrics.create());
-    PlacementPolicyValidateProxy placementPolicyValidateProxy = new PlacementPolicyValidateProxy(
-        placementPolicy, ecPlacementPolicy);
+    PlacementPolicyValidateProxy placementPolicyValidateProxy =
+        new PlacementPolicyValidateProxy(
+            placementPolicy, ecPlacementPolicy);
 
     Mockito.when(replicationManager
             .isContainerReplicatingOrDeleting(Mockito.any(ContainerID.class)))
@@ -234,11 +242,12 @@ public class TestContainerBalancerTask {
       Assertions.assertEquals(nodeUtilizations.get(i),
           nodesInCluster.get(i).calculateUtilization(), 0.0001);
     }
-    ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
+    startBalancerTask(balancerConfiguration);
 
     // should be equal to average utilization of the cluster
     Assertions.assertEquals(averageUtilization,
-        ContainerBalanceIteration.calculateAvgUtilization(nodesInCluster), 0.0001);
+        ContainerBalanceIteration.calculateAvgUtilization(nodesInCluster),
+        0.0001);
   }
 
   /**
@@ -246,9 +255,9 @@ public class TestContainerBalancerTask {
    * unBalanced nodes with varying values of Threshold.
    */
   @Test
-  public void initializeIterationShouldUpdateUnBalancedNodesWhenThresholdChanges() {
+  public void
+      initializeIterationShouldUpdateUnBalancedNodesWhenThresholdChanges() {
     List<DatanodeUsageInfo> expectedUnBalancedNodes;
-    List<DatanodeUsageInfo> unBalancedNodesAccordingToBalancer;
 
     // check for random threshold values
     ContainerBalancer sb = new ContainerBalancer(scm);
@@ -259,27 +268,27 @@ public class TestContainerBalancerTask {
           determineExpectedUnBalancedNodes(randomThreshold);
 
       balancerConfiguration.setThreshold(randomThreshold);
-      ContainerBalancerTask task = new ContainerBalancerTask(scm, 0, sb,
-          balancerConfiguration, false);
+      ContainerBalancerTask task = new ContainerBalancerTask(scm,
+          0, sb, balancerConfiguration, false);
       task.run();
 
-      unBalancedNodesAccordingToBalancer =
-          task.getUnBalancedNodes();
+      List<DatanodeUsageInfo> actualUnBalancedNodes = getUnBalancedNodes(task);
 
       Assertions.assertEquals(
           expectedUnBalancedNodes.size(),
-          unBalancedNodesAccordingToBalancer.size());
+          actualUnBalancedNodes.size());
 
       for (int j = 0; j < expectedUnBalancedNodes.size(); j++) {
         Assertions.assertEquals(
             expectedUnBalancedNodes.get(j).getDatanodeDetails(),
-            unBalancedNodesAccordingToBalancer.get(j).getDatanodeDetails());
+            actualUnBalancedNodes.get(j).getDatanodeDetails());
       }
     }
   }
 
   @Test
-  public void testBalancerWithMoveManager() throws IOException, TimeoutException, NodeNotFoundException {
+  public void testBalancerWithMoveManager()
+      throws IOException, TimeoutException, NodeNotFoundException {
     rmConf.setEnableLegacy(false);
     startBalancerTask(balancerConfiguration);
     Mockito.verify(moveManager, atLeastOnce())
@@ -304,8 +313,7 @@ public class TestContainerBalancerTask {
 
     stopBalancer();
     ContainerBalancerMetrics metrics = task.getMetrics();
-    Assertions.assertEquals(0, task.getUnBalancedNodes()
-        .size());
+    Assertions.assertEquals(0, getUnBalancedNodes(task).size());
     Assertions.assertEquals(0, metrics.getNumDatanodesUnbalanced());
   }
 
@@ -345,8 +353,7 @@ public class TestContainerBalancerTask {
     stopBalancer();
 
     // balancer should have identified unbalanced nodes
-    Assertions.assertFalse(task.getUnBalancedNodes()
-        .isEmpty());
+    Assertions.assertFalse(getUnBalancedNodes(task).isEmpty());
     // no container should have been selected
     Assertions.assertTrue(task.getContainerToSourceMap()
         .isEmpty());
@@ -377,7 +384,8 @@ public class TestContainerBalancerTask {
    * Container Balancer should not select a non-CLOSED replica for moving.
    */
   @Test
-  public void balancerShouldNotSelectNonClosedContainerReplicas() throws IOException {
+  public void balancerShouldNotSelectNonClosedContainerReplicas()
+      throws IOException {
     // let's mock such that all replicas have CLOSING state
     when(containerManager.getContainerReplicas(Mockito.any(ContainerID.class)))
         .thenAnswer(invocationOnMock -> {
@@ -404,8 +412,7 @@ public class TestContainerBalancerTask {
     stopBalancer();
 
     // balancer should have identified unbalanced nodes
-    Assertions.assertFalse(task.getUnBalancedNodes()
-        .isEmpty());
+    Assertions.assertFalse(getUnBalancedNodes(task).isEmpty());
     // no container should have moved because all replicas are CLOSING
     Assertions.assertTrue(
         task.getContainerToSourceMap().isEmpty());
@@ -495,7 +502,8 @@ public class TestContainerBalancerTask {
   }
 
   @Test
-  public void targetDatanodeShouldBeInServiceHealthy() throws NodeNotFoundException {
+  public void targetDatanodeShouldBeInServiceHealthy()
+      throws NodeNotFoundException {
     balancerConfiguration.setThreshold(10);
     balancerConfiguration.setMaxDatanodesPercentageToInvolvePerIteration(100);
     balancerConfiguration.setMaxSizeToMovePerIteration(50 * STORAGE_UNIT);
@@ -514,45 +522,41 @@ public class TestContainerBalancerTask {
 
   @Test
   public void selectedContainerShouldNotAlreadyHaveBeenSelected()
-      throws IOException, NodeNotFoundException, TimeoutException
-  {
+      throws IOException, NodeNotFoundException, TimeoutException {
     balancerConfiguration.setThreshold(10);
     balancerConfiguration.setMaxDatanodesPercentageToInvolvePerIteration(100);
     balancerConfiguration.setMaxSizeToMovePerIteration(50 * STORAGE_UNIT);
     balancerConfiguration.setMaxSizeEnteringTarget(50 * STORAGE_UNIT);
     balancerConfiguration.setIterations(1);
-    {
-      rmConf.setEnableLegacy(true);
-      ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
-      stopBalancer();
-      int numContainers = task.getContainerToTargetMap().size();
 
-    /*
-    Assuming move is called exactly once for each unique container, number of
-     calls to move should equal number of unique containers. If number of
-     calls to move is more than number of unique containers, at least one
-     container has been re-selected. It's expected that number of calls to
-     move should equal number of unique, selected containers (from
-     containerToTargetMap).
-     */
-      Mockito.verify(replicationManager, times(numContainers))
-          .move(any(ContainerID.class), any(DatanodeDetails.class),
-              any(DatanodeDetails.class));
-    }
+    rmConf.setEnableLegacy(true);
+    ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
+    stopBalancer();
+    int numContainers = task.getContainerToTargetMap().size();
+
+  /*
+  Assuming move is called exactly once for each unique container, number of
+   calls to move should equal number of unique containers. If number of
+   calls to move is more than number of unique containers, at least one
+   container has been re-selected. It's expected that number of calls to
+   move should equal number of unique, selected containers (from
+   containerToTargetMap).
+   */
+    Mockito.verify(replicationManager, times(numContainers))
+        .move(any(ContainerID.class), any(DatanodeDetails.class),
+            any(DatanodeDetails.class));
 
     /*
      Try the same test by disabling LegacyReplicationManager so that
      MoveManager is used.
      */
-    {
-      rmConf.setEnableLegacy(false);
-      ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
-      stopBalancer();
-      int numContainers = task.getContainerToTargetMap().size();
-      Mockito.verify(moveManager, times(numContainers))
-          .move(any(ContainerID.class), any(DatanodeDetails.class),
-              any(DatanodeDetails.class));
-    }
+    rmConf.setEnableLegacy(false);
+    ContainerBalancerTask nextTask = startBalancerTask(balancerConfiguration);
+    stopBalancer();
+    numContainers = nextTask.getContainerToTargetMap().size();
+    Mockito.verify(moveManager, times(numContainers))
+        .move(any(ContainerID.class), any(DatanodeDetails.class),
+            any(DatanodeDetails.class));
   }
 
   @Test
@@ -576,35 +580,34 @@ public class TestContainerBalancerTask {
 
   @Test
   public void balancerShouldObeyMaxSizeEnteringTargetLimit() {
-    {
-      conf.set("ozone.scm.container.size", "1MB");
-      balancerConfiguration = conf.getObject(ContainerBalancerConfiguration.class);
-      balancerConfiguration.setThreshold(10);
-      balancerConfiguration.setMaxDatanodesPercentageToInvolvePerIteration(100);
-      balancerConfiguration.setMaxSizeToMovePerIteration(50 * STORAGE_UNIT);
+    conf.set("ozone.scm.container.size", "1MB");
+    balancerConfiguration =
+        conf.getObject(ContainerBalancerConfiguration.class);
+    balancerConfiguration.setThreshold(10);
+    balancerConfiguration.setMaxDatanodesPercentageToInvolvePerIteration(100);
+    balancerConfiguration.setMaxSizeToMovePerIteration(50 * STORAGE_UNIT);
 
-      // no containers should be selected when the limit is just 2 MB
-      balancerConfiguration.setMaxSizeEnteringTarget(2 * OzoneConsts.MB);
-      ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
+    // no containers should be selected when the limit is just 2 MB
+    balancerConfiguration.setMaxSizeEnteringTarget(2 * OzoneConsts.MB);
+    ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
 
-      Assertions.assertFalse(task.getUnBalancedNodes().isEmpty());
-      Assertions.assertTrue(task.getContainerToSourceMap().isEmpty());
-      stopBalancer();
-    }
-    {
-      // some containers should be selected when using default values
-      OzoneConfiguration ozoneConfiguration = new OzoneConfiguration();
-      ContainerBalancerConfiguration cbc = ozoneConfiguration.
-          getObject(ContainerBalancerConfiguration.class);
-      cbc.setBalancingInterval(1);
+    Assertions.assertFalse(getUnBalancedNodes(task).isEmpty());
+    Assertions.assertTrue(task.getContainerToSourceMap().isEmpty());
+    stopBalancer();
 
-      ContainerBalancerTask task = startBalancerTask(cbc);
+    // some containers should be selected when using default values
+    OzoneConfiguration ozoneConfiguration = new OzoneConfiguration();
+    ContainerBalancerConfiguration cbc = ozoneConfiguration.
+        getObject(ContainerBalancerConfiguration.class);
+    cbc.setBalancingInterval(1);
 
-      stopBalancer();
-      // balancer should have identified unbalanced nodes
-      Assertions.assertFalse(task.getUnBalancedNodes().isEmpty());
-      Assertions.assertFalse(task.getContainerToSourceMap().isEmpty());
-    }
+    ContainerBalancerTask nextTask = startBalancerTask(cbc);
+
+    stopBalancer();
+    // balancer should have identified unbalanced nodes
+    Assertions.assertFalse(getUnBalancedNodes(nextTask).isEmpty());
+    Assertions.assertFalse(nextTask.getContainerToSourceMap().isEmpty());
+
   }
 
   @Test
@@ -620,7 +623,7 @@ public class TestContainerBalancerTask {
     balancerConfiguration.setMaxSizeLeavingSource(2 * OzoneConsts.MB);
     ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
 
-    Assertions.assertFalse(task.getUnBalancedNodes().isEmpty());
+    Assertions.assertFalse(getUnBalancedNodes(task).isEmpty());
     Assertions.assertTrue(task.getContainerToSourceMap().isEmpty());
     stopBalancer();
 
@@ -635,7 +638,7 @@ public class TestContainerBalancerTask {
 
     stopBalancer();
     // balancer should have identified unbalanced nodes
-    Assertions.assertFalse(task.getUnBalancedNodes().isEmpty());
+    Assertions.assertFalse(getUnBalancedNodes(task).isEmpty());
     Assertions.assertFalse(task.getContainerToSourceMap().isEmpty());
     Assertions.assertTrue(0 !=
         task.getSizeScheduledForMoveInLatestIteration());
@@ -667,7 +670,8 @@ public class TestContainerBalancerTask {
     Assertions.assertTrue(metrics.getDataSizeMovedGBInLatestIteration() <= 6);
     Assertions.assertTrue(metrics.getDataSizeMovedGB() > 0);
     Assertions.assertEquals(1, metrics.getNumIterations());
-    Assertions.assertTrue(metrics.getNumContainerMovesScheduledInLatestIteration() > 0);
+    Assertions.assertTrue(
+        metrics.getNumContainerMovesScheduledInLatestIteration() > 0);
     Assertions.assertEquals(metrics.getNumContainerMovesScheduled(),
         metrics.getNumContainerMovesScheduledInLatestIteration());
     Assertions.assertEquals(metrics.getNumContainerMovesScheduled(),
@@ -772,7 +776,8 @@ public class TestContainerBalancerTask {
   }
 
   @Test
-  public void checkIterationResult() throws NodeNotFoundException, IOException, TimeoutException {
+  public void checkIterationResult()
+      throws NodeNotFoundException, IOException, TimeoutException {
     balancerConfiguration.setThreshold(10);
     balancerConfiguration.setIterations(1);
     balancerConfiguration.setMaxSizeEnteringTarget(10 * STORAGE_UNIT);
@@ -825,7 +830,8 @@ public class TestContainerBalancerTask {
    * take longer than "move.timeout".
    */
   @Test
-  public void checkIterationResultTimeout() throws NodeNotFoundException, IOException, TimeoutException {
+  public void checkIterationResultTimeout()
+      throws NodeNotFoundException, IOException, TimeoutException {
 
     CompletableFuture<MoveManager.MoveResult> completedFuture =
         CompletableFuture.completedFuture(MoveManager.MoveResult.COMPLETED);
@@ -883,8 +889,7 @@ public class TestContainerBalancerTask {
 
   @Test
   public void checkIterationResultTimeoutFromReplicationManager()
-      throws NodeNotFoundException, IOException, TimeoutException
-  {
+      throws NodeNotFoundException, IOException, TimeoutException {
     CompletableFuture<MoveManager.MoveResult> future
         = CompletableFuture.supplyAsync(() ->
         MoveManager.MoveResult.REPLICATION_FAIL_TIME_OUT);
@@ -929,8 +934,10 @@ public class TestContainerBalancerTask {
   }
 
   @Test
-  public void checkIterationResultException() throws NodeNotFoundException, IOException, TimeoutException {
-    CompletableFuture<MoveManager.MoveResult> future = new CompletableFuture<>();
+  public void checkIterationResultException()
+      throws NodeNotFoundException, IOException, TimeoutException {
+    CompletableFuture<MoveManager.MoveResult> future =
+        new CompletableFuture<>();
     future.completeExceptionally(new RuntimeException("Runtime Exception"));
     Mockito.when(replicationManager.move(Mockito.any(ContainerID.class),
             Mockito.any(DatanodeDetails.class),
@@ -954,7 +961,9 @@ public class TestContainerBalancerTask {
     rmConf.setEnableLegacy(true);
 
     ContainerBalancerTask task = startBalancerTask(balancerConfiguration);
-    Assertions.assertEquals(ContainerBalancerTask.IterationResult.ITERATION_COMPLETED, task.getIterationResult());
+    Assertions.assertEquals(
+        ContainerBalancerTask.IterationResult.ITERATION_COMPLETED,
+        task.getIterationResult());
     Assertions.assertTrue(task.getMetrics().getNumContainerMovesFailed() >= 3);
     stopBalancer();
 
@@ -976,7 +985,9 @@ public class TestContainerBalancerTask {
 
     rmConf.setEnableLegacy(false);
 
-    Assertions.assertEquals(ContainerBalancerTask.IterationResult.ITERATION_COMPLETED, task.getIterationResult());
+    Assertions.assertEquals(
+        ContainerBalancerTask.IterationResult.ITERATION_COMPLETED,
+        task.getIterationResult());
     Assertions.assertTrue(task.getMetrics().getNumContainerMovesFailed() >= 3);
     stopBalancer();
   }
@@ -1000,7 +1011,8 @@ public class TestContainerBalancerTask {
      */
     GenericTestUtils.waitFor(
         () -> balancingThread.getState() == Thread.State.TIMED_WAITING, 1, 20);
-    Assertions.assertEquals(Thread.State.TIMED_WAITING, balancingThread.getState());
+    Assertions.assertEquals(Thread.State.TIMED_WAITING,
+        balancingThread.getState());
 
     // interrupt the thread from its sleep, wait and assert that balancer has
     // STOPPED
@@ -1034,11 +1046,13 @@ public class TestContainerBalancerTask {
      Get all containers that were selected by balancer and assert none of
      them is an EC container.
      */
-    Map<ContainerID, DatanodeDetails> containerToSource = task.getContainerToSourceMap();
+    Map<ContainerID, DatanodeDetails> containerToSource =
+        task.getContainerToSourceMap();
     Assertions.assertFalse(containerToSource.isEmpty());
     for (ContainerID containerID : containerToSource.keySet()) {
       ContainerInfo containerInfo = cidToInfoMap.get(containerID);
-      Assertions.assertNotSame(HddsProtos.ReplicationType.EC, containerInfo.getReplicationType());
+      Assertions.assertNotSame(HddsProtos.ReplicationType.EC,
+          containerInfo.getReplicationType());
     }
   }
 
@@ -1050,7 +1064,9 @@ public class TestContainerBalancerTask {
    * @return List of DatanodeUsageInfo containing the expected(correct)
    * unBalanced nodes.
    */
-  private List<DatanodeUsageInfo> determineExpectedUnBalancedNodes(double threshold) {
+  private @Nonnull List<DatanodeUsageInfo> determineExpectedUnBalancedNodes(
+      double threshold
+  ) {
     threshold /= 100;
     double lowerLimit = averageUtilization - threshold;
     double upperLimit = averageUtilization + threshold;
@@ -1165,7 +1181,7 @@ public class TestContainerBalancerTask {
     }
   }
 
-  private ContainerInfo createContainer(long id, int multiple) {
+  private @Nonnull ContainerInfo createContainer(long id, int multiple) {
     ContainerInfo.Builder builder = new ContainerInfo.Builder()
         .setContainerID(id)
         .setState(HddsProtos.LifeCycleState.CLOSED)
@@ -1215,9 +1231,11 @@ public class TestContainerBalancerTask {
     }
   }
 
-  private ContainerReplica createReplica(ContainerID containerID,
-                                         DatanodeDetails datanodeDetails,
-                                         long usedBytes) {
+  private @Nonnull ContainerReplica createReplica(
+      @Nonnull ContainerID containerID,
+      @Nonnull DatanodeDetails datanodeDetails,
+      long usedBytes
+  ) {
     return ContainerReplica.newBuilder()
         .setContainerID(containerID)
         .setContainerState(ContainerReplicaProto.State.CLOSED)
@@ -1228,9 +1246,12 @@ public class TestContainerBalancerTask {
         .build();
   }
 
-  private ContainerBalancerTask startBalancerTask(ContainerBalancerConfiguration config) {
+  private @Nonnull ContainerBalancerTask startBalancerTask(
+      @Nonnull ContainerBalancerConfiguration config
+  ) {
     ContainerBalancer containerBalancer = new ContainerBalancer(scm);
-    ContainerBalancerTask task = new ContainerBalancerTask(scm, 0, containerBalancer, config, false);
+    ContainerBalancerTask task =
+        new ContainerBalancerTask(scm, 0, containerBalancer, config, false);
     task.run();
     return task;
   }
@@ -1239,8 +1260,9 @@ public class TestContainerBalancerTask {
     // do nothing as testcase is not threaded
   }
 
-  private CompletableFuture<MoveManager.MoveResult>
-  genCompletableFuture(int sleepMilSec) {
+  private CompletableFuture<MoveManager.MoveResult> genCompletableFuture(
+      int sleepMilSec
+  ) {
     return CompletableFuture.supplyAsync(() -> {
       try {
         Thread.sleep(sleepMilSec);
@@ -1249,5 +1271,14 @@ public class TestContainerBalancerTask {
       }
       return MoveManager.MoveResult.COMPLETED;
     });
+  }
+
+  private static @Nonnull List<DatanodeUsageInfo> getUnBalancedNodes(
+      @Nonnull ContainerBalancerTask task
+  ) {
+    ArrayList<DatanodeUsageInfo> result = new ArrayList<>();
+    result.addAll(task.getOverUtilizedNodes());
+    result.addAll(task.getUnderUtilizedNodes());
+    return result;
   }
 }

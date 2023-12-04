@@ -22,19 +22,22 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
-import org.apache.hadoop.hdds.scm.container.*;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
+import org.apache.hadoop.hdds.scm.container.balancer.iteration.ContainerBalanceIteration;
 import org.apache.hadoop.hdds.scm.ha.SCMContext;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
 import org.apache.hadoop.hdds.scm.node.NodeManager;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
-import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -47,7 +50,8 @@ import static org.apache.hadoop.hdds.HddsConfigKeys.HDDS_NODE_REPORT_INTERVAL_DE
  */
 public class ContainerBalancerTask implements Runnable {
 
-  public static final Logger LOG = LoggerFactory.getLogger(ContainerBalancerTask.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(ContainerBalancerTask.class);
 
   private final NodeManager nodeManager;
   private final int nextIterationIndex;
@@ -65,17 +69,18 @@ public class ContainerBalancerTask implements Runnable {
   /**
    * Constructs ContainerBalancerTask with the specified arguments.
    *
-   * @param scm the storage container manager
+   * @param scm                the storage container manager
    * @param nextIterationIndex next iteration index for continue
-   * @param containerBalancer the container balancer
-   * @param config the config
+   * @param containerBalancer  the container balancer
+   * @param config             the config
    */
-  public ContainerBalancerTask(StorageContainerManager scm,
-                               int nextIterationIndex,
-                               ContainerBalancer containerBalancer,
-                               ContainerBalancerConfiguration config,
-                               boolean delayStart)
-  {
+  public ContainerBalancerTask(
+      @Nonnull StorageContainerManager scm,
+      int nextIterationIndex,
+      @Nonnull ContainerBalancer containerBalancer,
+      @Nonnull ContainerBalancerConfiguration config,
+      boolean delayStart
+  ) {
     this.scm = scm;
     this.nodeManager = scm.getScmNodeManager();
     this.nextIterationIndex = nextIterationIndex;
@@ -96,7 +101,9 @@ public class ContainerBalancerTask implements Runnable {
             HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT,
             HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT_DEFAULT,
             TimeUnit.SECONDS);
-        LOG.info("ContainerBalancer will sleep for {} seconds before starting balancing.", delayDuration);
+        LOG.info("ContainerBalancer will sleep for {} seconds before" +
+                " starting balancing.",
+            delayDuration);
         Thread.sleep(Duration.ofSeconds(delayDuration).toMillis());
       }
       balance();
@@ -129,63 +136,29 @@ public class ContainerBalancerTask implements Runnable {
 
     // nextIterationIndex is the iteration that balancer should start from on
     // leader change or restart
-    for (int i = nextIterationIndex; i < iterations && isBalancerRunning(); ++i) {
+    for (int i = nextIterationIndex; i < iterations && isRunning(); ++i) {
       // reset some variables and metrics for this iteration
       if (it != null) {
         it.resetState();
       }
-      if (config.getTriggerDuEnable()) {
-        // before starting a new iteration, we trigger all the datanode
-        // to run `du`. this is an aggressive action, with which we can
-        // get more precise usage info of all datanodes before moving.
-        // this is helpful for container balancer to make more appropriate
-        // decisions. this will increase the disk io load of data nodes, so
-        // please enable it with caution.
-        nodeManager.refreshAllHealthyDnUsageInfo();
-        try {
-          long nodeReportInterval =
-              ozoneConfiguration.getTimeDuration(HDDS_NODE_REPORT_INTERVAL,
-                  HDDS_NODE_REPORT_INTERVAL_DEFAULT, TimeUnit.MILLISECONDS);
-          // one for sending command , one for running du, and one for
-          // reporting back make it like this for now, a more suitable
-          // value. can be set in the future if needed
-          long sleepTime = 3 * nodeReportInterval;
-          LOG.info("ContainerBalancer will sleep for {} ms while waiting " +
-              "for updated usage information from Datanodes.", sleepTime);
-          Thread.sleep(sleepTime);
-        } catch (InterruptedException e) {
-          LOG.info("Container Balancer was interrupted while waiting for" +
-              "datanodes refreshing volume usage info");
-          Thread.currentThread().interrupt();
-          return;
-        }
-      }
 
-      if (!isBalancerRunning()) {
+      if (balancerIsNotReady()) {
         return;
       }
 
-      if (scmIsNotReady()) {
+      List<DatanodeUsageInfo> datanodeUsageInfos = getDatanodeUsageInfos();
+      if (datanodeUsageInfos == null) {
         return;
       }
-      // sorted list in order from most to least used
-      List<DatanodeUsageInfo> datanodeUsageInfos = nodeManager.getMostOrLeastUsedDatanodes(true);
-      if (datanodeUsageInfos.isEmpty()) {
-        LOG.warn("Received an empty list of datanodes from Node Manager when " +
-            "trying to identify which nodes to balance");
-        return;
-      }
-      // include/exclude nodes from balancing according to configs
-      datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config, dnUsageInfo.getDatanodeDetails()));
 
-      it = new ContainerBalanceIteration(containerBalancer, config, scm, datanodeUsageInfos);
+      it = new ContainerBalanceIteration(containerBalancer.getMetrics(), config,
+          scm, datanodeUsageInfos);
 
       // initialize this iteration. stop balancing on initialization failure
-      boolean b = it.findOverAndUnderUtilizedNodes(this, datanodeUsageInfos);
-      if (!b) {
+      if (!it.findUnBalancedNodes(this::isRunning, datanodeUsageInfos)) {
         // just return if the reason for initialization failure is that
         // balancer has been stopped in another thread
-        if (!isBalancerRunning()) {
+        if (!isRunning()) {
           return;
         }
         // otherwise, try to stop balancer
@@ -194,18 +167,21 @@ public class ContainerBalancerTask implements Runnable {
         return;
       }
 
-      ContainerBalanceIteration.IterationState currentState = it.doIteration(this, config);
-      LOG.info("Result of this iteration of Container Balancer: {}", currentState);
+      IterationResult iterationResult =
+          it.doIteration(this::isRunning, config.getMoveTimeout().toMillis());
+
+      LOG.info("Result of this iteration of Container Balancer: {}",
+          iterationResult);
 
       // if no new move option is generated, it means the cluster cannot be
       // balanced anymore; so just stop balancer
-      if (currentState.status == IterationResult.CAN_NOT_BALANCE_ANY_MORE) {
-        tryStopWithSaveConfiguration(currentState.toString());
+      if (iterationResult == IterationResult.CAN_NOT_BALANCE_ANY_MORE) {
+        tryStopWithSaveConfiguration(iterationResult.toString());
         return;
       }
 
       // persist next iteration index
-      if (currentState.status == IterationResult.ITERATION_COMPLETED) {
+      if (iterationResult == IterationResult.ITERATION_COMPLETED) {
         try {
           saveConfiguration(config, true, i + 1);
         } catch (IOException | TimeoutException e) {
@@ -215,7 +191,7 @@ public class ContainerBalancerTask implements Runnable {
       }
 
       // return if balancing has been stopped
-      if (!isBalancerRunning()) {
+      if (!isRunning()) {
         return;
       }
 
@@ -232,16 +208,72 @@ public class ContainerBalancerTask implements Runnable {
         }
       }
     }
-    
+
     tryStopWithSaveConfiguration("Completed all iterations.");
+  }
+
+  private @Nullable List<DatanodeUsageInfo> getDatanodeUsageInfos() {
+    // sorted list in order from most to least used
+    List<DatanodeUsageInfo> datanodeUsageInfos =
+        nodeManager.getMostOrLeastUsedDatanodes(true);
+    if (datanodeUsageInfos.isEmpty()) {
+      LOG.warn("Received an empty list of datanodes from Node Manager when " +
+          "trying to identify which nodes to balance");
+      return null;
+    }
+    // include/exclude nodes from balancing according to configs
+    datanodeUsageInfos.removeIf(dnUsageInfo -> shouldExcludeDatanode(config,
+        dnUsageInfo.getDatanodeDetails()));
+    return datanodeUsageInfos;
+  }
+
+  private boolean balancerIsNotReady() {
+    return
+        config.getTriggerDuEnable() &&
+            runCommandDU(nodeManager, ozoneConfiguration)
+            || !isRunning()
+            || scmIsNotReady();
+  }
+
+  private static boolean runCommandDU(
+      @Nonnull NodeManager nodeManager,
+      @Nonnull OzoneConfiguration ozoneConfiguration
+  ) {
+    // before starting a new iteration, we trigger all the datanode
+    // to run `du`. this is an aggressive action, with which we can
+    // get more precise usage info of all datanodes before moving.
+    // this is helpful for container balancer to make more appropriate
+    // decisions. this will increase the disk io load of data nodes, so
+    // please enable it with caution.
+    nodeManager.refreshAllHealthyDnUsageInfo();
+    try {
+      long nodeReportInterval = ozoneConfiguration.getTimeDuration(
+          HDDS_NODE_REPORT_INTERVAL,
+          HDDS_NODE_REPORT_INTERVAL_DEFAULT,
+          TimeUnit.MILLISECONDS
+      );
+      // one for sending command , one for running du, and one for
+      // reporting back make it like this for now, a more suitable
+      // value. can be set in the future if needed
+      long sleepTime = 3 * nodeReportInterval;
+      LOG.info("ContainerBalancer will sleep for {} ms while waiting " +
+          "for updated usage information from Datanodes.", sleepTime);
+      Thread.sleep(sleepTime);
+    } catch (InterruptedException e) {
+      LOG.info("Container Balancer was interrupted while waiting for" +
+          "datanodes refreshing volume usage info");
+      Thread.currentThread().interrupt();
+      return true;
+    }
+    return false;
   }
 
   /**
    * Logs the reason for stop and save configuration and stop the task.
-   * 
+   *
    * @param stopReason a string specifying the reason for stop
    */
-  private void tryStopWithSaveConfiguration(String stopReason) {
+  private void tryStopWithSaveConfiguration(@Nonnull String stopReason) {
     synchronized (this) {
       try {
         LOG.info("Save Configuration for stopping. Reason: {}", stopReason);
@@ -254,15 +286,17 @@ public class ContainerBalancerTask implements Runnable {
     }
   }
 
-  private void saveConfiguration(ContainerBalancerConfiguration configuration,
-                                 boolean shouldRun, int index)
-      throws IOException, TimeoutException {
+  private void saveConfiguration(
+      @Nonnull ContainerBalancerConfiguration configuration,
+      boolean shouldRun,
+      int index
+  ) throws IOException, TimeoutException {
     if (scmIsNotReady()) {
       LOG.warn("Save configuration is not allowed as not in valid State.");
       return;
     }
     synchronized (this) {
-      if (isBalancerRunning()) {
+      if (isRunning()) {
         containerBalancer.saveConfiguration(configuration, shouldRun, index);
       }
     }
@@ -281,49 +315,56 @@ public class ContainerBalancerTask implements Runnable {
   }
 
   /**
-   * Consults the configurations {@link ContainerBalancerConfiguration#includeNodes} and
-   * {@link ContainerBalancerConfiguration#excludeNodes} to check if the specified
-   * Datanode should be excluded from balancing.
+   * Consults the configurations
+   * {@link ContainerBalancerConfiguration#includeNodes} and
+   * {@link ContainerBalancerConfiguration#excludeNodes} to check
+   * if the specified Datanode should be excluded from balancing.
    *
    * @param config
    * @param datanode DatanodeDetails to check
    * @return true if Datanode should be excluded, else false
    */
-  private static boolean shouldExcludeDatanode(@NotNull ContainerBalancerConfiguration config,
-                                               @NotNull DatanodeDetails datanode)
-  {
-    Set<String> includeNodes = config.getIncludeNodes();
+  private static boolean shouldExcludeDatanode(
+      @Nonnull ContainerBalancerConfiguration config,
+      @Nonnull DatanodeDetails datanode
+  ) {
     Set<String> excludeNodes = config.getExcludeNodes();
-    if (excludeNodes.contains(datanode.getHostName()) || excludeNodes.contains(datanode.getIpAddress())) {
+    String hostName = datanode.getHostName();
+    String ipAddress = datanode.getIpAddress();
+    if (excludeNodes.contains(hostName) || excludeNodes.contains(ipAddress)) {
       return true;
-    } else if (!includeNodes.isEmpty()) {
-      return !includeNodes.contains(datanode.getHostName()) && !includeNodes.contains(datanode.getIpAddress());
+    } else {
+      Set<String> includeNodes = config.getIncludeNodes();
+      return
+          !includeNodes.isEmpty() &&
+              !includeNodes.contains(hostName) &&
+              !includeNodes.contains(ipAddress);
     }
-    return false;
   }
 
   /**
-   * Checks if ContainerBalancerTask is currently running.
+   * Gets the list of under utilized nodes in the cluster.
    *
-   * @return true if the status is RUNNING, otherwise false
-   */
-  boolean isBalancerRunning() {
-    return taskStatus == Status.RUNNING;
-  }
-
-  /**
-   * Gets the list of unBalanced nodes, that is, the over and under utilized
-   * nodes in the cluster.
-   *
-   * @return List of DatanodeUsageInfo containing unBalanced nodes.
+   * @return List of DatanodeUsageInfo containing under utilized nodes.
    */
   @VisibleForTesting
-  List<DatanodeUsageInfo> getUnBalancedNodes() {
-    return it.getUnBalancedNodes();
+  List<DatanodeUsageInfo> getUnderUtilizedNodes() {
+    return it.getUnderUtilizedNodes();
+  }
+
+  /**
+   * Gets the list of over utilized nodes in the cluster.
+   *
+   * @return List of DatanodeUsageInfo containing over utilized nodes.
+   */
+  @VisibleForTesting
+  List<DatanodeUsageInfo> getOverUtilizedNodes() {
+    return it.getOverUtilizedNodes();
   }
 
   /**
    * Gets a map with selected containers and their source datanodes.
+   *
    * @return map with mappings from {@link ContainerID} to
    * {@link DatanodeDetails}
    */
@@ -334,6 +375,7 @@ public class ContainerBalancerTask implements Runnable {
 
   /**
    * Gets a map with selected containers and target datanodes.
+   *
    * @return map with mappings from {@link ContainerID} to
    * {@link DatanodeDetails}.
    */
@@ -383,24 +425,14 @@ public class ContainerBalancerTask implements Runnable {
   public String toString() {
     String status = String.format("%nContainer Balancer Task status:%n" +
         "%-30s %s%n" +
-        "%-30s %b%n", "Key", "Value", "Running", isBalancerRunning());
+        "%-30s %b%n", "Key", "Value", "Running", isRunning());
     return status + config.toString();
   }
 
-  static class MoveState {
-    final ContainerMoveSelection moveSelection;
-    final CompletableFuture<MoveManager.MoveResult> result;
-
-    public MoveState(ContainerMoveSelection moveSelection, CompletableFuture<MoveManager.MoveResult> future) {
-      this.moveSelection = moveSelection;
-      this.result = future;
-    }
-  }
-
   /**
-   * The result of {@link ContainerBalancerTask#doIteration(ContainerBalanceIteration)}.
+   * The result of {@link ContainerBalancerTask#doIteration}.
    */
-  enum IterationResult {
+  public enum IterationResult {
     ITERATION_COMPLETED,
     ITERATION_INTERRUPTED,
     CAN_NOT_BALANCE_ANY_MORE

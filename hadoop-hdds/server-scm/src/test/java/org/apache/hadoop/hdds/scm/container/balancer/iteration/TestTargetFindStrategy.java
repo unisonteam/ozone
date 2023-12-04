@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hdds.scm.container.balancer;
+package org.apache.hadoop.hdds.scm.container.balancer.iteration;
 
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.MockDatanodeDetails;
@@ -36,19 +36,22 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import static org.apache.hadoop.hdds.scm.net.NetConstants.*;
+import static org.apache.hadoop.hdds.scm.net.NetConstants.LEAF_SCHEMA;
+import static org.apache.hadoop.hdds.scm.net.NetConstants.NODEGROUP_SCHEMA;
+import static org.apache.hadoop.hdds.scm.net.NetConstants.RACK_SCHEMA;
+import static org.apache.hadoop.hdds.scm.net.NetConstants.ROOT_SCHEMA;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 /**
  * Tests for all the implementations of FindTargetStrategy.
  */
-public class TestFindTargetStrategy {
+public class TestTargetFindStrategy {
   /**
    * Checks whether FindTargetGreedyByUsage always choose target
    * for a given source by Usage.
    */
-    @Test
+  @Test
   public void testFindTargetGreedyByUsage() {
     StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
     FindTargetGreedyByUsageInfo findTargetStrategyByUsageInfo =
@@ -83,11 +86,11 @@ public class TestFindTargetStrategy {
 
     //make sure after sorting target for source, the potentialTargets is
     //sorted in descending order of usage
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[0])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[0])
         .getDatanodeDetails(), dui3.getDatanodeDetails());
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[1])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[1])
         .getDatanodeDetails(), dui2.getDatanodeDetails());
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[2])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[2])
         .getDatanodeDetails(), dui1.getDatanodeDetails());
 
   }
@@ -114,7 +117,8 @@ public class TestFindTargetStrategy {
     StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
     when(scm.getScmNodeManager()).thenReturn(mockNodeManager);
 
-    FindTargetGreedyByUsageInfo findTargetGreedyByUsageInfo = new FindTargetGreedyByUsageInfo(scm);
+    FindTargetGreedyByUsageInfo
+        findTargetGreedyByUsageInfo = new FindTargetGreedyByUsageInfo(scm);
     findTargetGreedyByUsageInfo.reInitialize(potentialTargets);
 
     // now, reset potential targets to only the first datanode
@@ -177,7 +181,6 @@ public class TestFindTargetStrategy {
     assertEquals(6, newCluster.getDistanceCost(source, target5));
 
 
-
     //insert in ascending order of network topology distance
     List<DatanodeUsageInfo> overUtilizedDatanodes = new ArrayList<>();
     //set the farthest target with the lowest usage info
@@ -198,15 +201,14 @@ public class TestFindTargetStrategy {
     StorageContainerManager scm = Mockito.mock(StorageContainerManager.class);
     when(scm.getClusterMap()).thenReturn(newCluster);
 
-    FindTargetGreedyByNetworkTopology findTargetGreedyByNetworkTopology = new FindTargetGreedyByNetworkTopology(scm);
+    FindTargetGreedyByNetworkTopology
+        strategy = new FindTargetGreedyByNetworkTopology(scm);
 
-    findTargetGreedyByNetworkTopology.reInitialize(
-        overUtilizedDatanodes);
-
-    findTargetGreedyByNetworkTopology.sortTargetForSource(source);
+    strategy.reInitialize(overUtilizedDatanodes);
+    strategy.sortTargetForSource(source);
 
     Collection<DatanodeUsageInfo> potentialTargets =
-        findTargetGreedyByNetworkTopology.getPotentialTargets();
+        strategy.getPotentialTargets();
 
     Object[] sortedPotentialTargetArray = potentialTargets.toArray();
     Assertions.assertEquals(sortedPotentialTargetArray.length, 5);
@@ -214,21 +216,21 @@ public class TestFindTargetStrategy {
     // although target1 has the highest usage, it has the nearest network
     // topology distance to source, so it should be at the head of the
     // sorted PotentialTargetArray
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[0])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[0])
         .getDatanodeDetails(), target1);
 
     // these targets have same network topology distance to source,
     // so they should be sorted by usage
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[1])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[1])
         .getDatanodeDetails(), target4);
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[2])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[2])
         .getDatanodeDetails(), target3);
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[3])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[3])
         .getDatanodeDetails(), target2);
 
     //target5 has the lowest usage , but it has the farthest distance to source
     //so it should be at the tail of the sorted PotentialTargetArray
-    Assertions.assertEquals(((DatanodeUsageInfo)sortedPotentialTargetArray[4])
+    Assertions.assertEquals(((DatanodeUsageInfo) sortedPotentialTargetArray[4])
         .getDatanodeDetails(), target5);
   }
 }

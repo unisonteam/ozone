@@ -30,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nonnull;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
@@ -302,7 +303,7 @@ public final class ContainerBalancerConfiguration {
     this.maxSizeLeavingSource = maxSizeLeavingSource;
   }
 
-  public Set<ContainerID> getExcludeContainers() {
+  public @Nonnull Set<ContainerID> getExcludeContainers() {
     if (excludeContainers.isEmpty()) {
       return new HashSet<>();
     }
