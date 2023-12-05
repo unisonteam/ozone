@@ -42,7 +42,6 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -195,7 +194,6 @@ public class ContainerBalanceIteration {
     metrics.incrementDataSizeUnbalancedGB(
         Math.max(totalOverUtilizedBytes, totalUnderUtilizedBytes) /
             OzoneConsts.GB);
-    Collections.reverse(underUtilizedNodes);
 
     if (overUtilizedNodes.isEmpty() && underUtilizedNodes.isEmpty()) {
       LOGGER.info("Did not find any unbalanced Datanodes.");

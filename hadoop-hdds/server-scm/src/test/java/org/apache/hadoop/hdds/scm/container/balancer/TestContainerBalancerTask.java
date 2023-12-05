@@ -255,17 +255,23 @@ public class TestContainerBalancerTask {
    * unBalanced nodes with varying values of Threshold.
    */
   @Test
-  public void
-      initializeIterationShouldUpdateUnBalancedNodesWhenThresholdChanges() {
-    List<DatanodeUsageInfo> expectedUnBalancedNodes;
-
+  public void testContainerBalancerTaskAfterChangingThresholdValue() {
     // check for random threshold values
     ContainerBalancer sb = new ContainerBalancer(scm);
     for (int i = 0; i < 50; i++) {
       double randomThreshold = RANDOM.nextDouble() * 100;
 
-      expectedUnBalancedNodes =
-          determineExpectedUnBalancedNodes(randomThreshold);
+      List<DatanodeUsageInfo> expectedUnBalancedNodes =
+          getUnBalancedNodes(randomThreshold);
+      // sort unbalanced nodes as it is done inside ContainerBalancerTask:217
+      //  in descending order by node utilization (most used node)
+      expectedUnBalancedNodes.sort(
+          (d1, d2) ->
+              Double.compare(
+                  d2.calculateUtilization(),
+                  d1.calculateUtilization()
+              )
+      );
 
       balancerConfiguration.setThreshold(randomThreshold);
       ContainerBalancerTask task = new ContainerBalancerTask(scm,
@@ -664,7 +670,7 @@ public class TestContainerBalancerTask {
     stopBalancer();
 
     ContainerBalancerMetrics metrics = task.getMetrics();
-    Assertions.assertEquals(determineExpectedUnBalancedNodes(
+    Assertions.assertEquals(getUnBalancedNodes(
             balancerConfiguration.getThreshold()).size(),
         metrics.getNumDatanodesUnbalanced());
     Assertions.assertTrue(metrics.getDataSizeMovedGBInLatestIteration() <= 6);
@@ -1060,11 +1066,11 @@ public class TestContainerBalancerTask {
    * Determines unBalanced nodes, that is, over and under utilized nodes,
    * according to the generated utilization values for nodes and the threshold.
    *
-   * @param threshold A percentage in the range 0 to 100
-   * @return List of DatanodeUsageInfo containing the expected(correct)
+   * @param threshold a percentage in the range 0 to 100
+   * @return set of DatanodeUsageInfo containing the expected(correct)
    * unBalanced nodes.
    */
-  private @Nonnull List<DatanodeUsageInfo> determineExpectedUnBalancedNodes(
+  private @Nonnull List<DatanodeUsageInfo> getUnBalancedNodes(
       double threshold
   ) {
     threshold /= 100;
@@ -1074,8 +1080,8 @@ public class TestContainerBalancerTask {
     // use node utilizations to determine over and under utilized nodes
     List<DatanodeUsageInfo> expectedUnBalancedNodes = new ArrayList<>();
     for (int i = 0; i < numberOfNodes; i++) {
-      if (nodeUtilizations.get(numberOfNodes - i - 1) > upperLimit) {
-        expectedUnBalancedNodes.add(nodesInCluster.get(numberOfNodes - i - 1));
+      if (nodeUtilizations.get(i) > upperLimit) {
+        expectedUnBalancedNodes.add(nodesInCluster.get(i));
       }
     }
     for (int i = 0; i < numberOfNodes; i++) {
