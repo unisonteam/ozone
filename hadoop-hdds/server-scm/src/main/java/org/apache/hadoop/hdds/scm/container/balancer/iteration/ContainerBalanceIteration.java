@@ -223,7 +223,7 @@ public class ContainerBalanceIteration {
 
   public @Nonnull ContainerBalancerTask.IterationResult doIteration(
       @Nonnull Supplier<Boolean> isTaskRunning,
-      long moveTimeoutInMillis
+      @Nonnull ContainerBalancerConfiguration config
   ) {
     // potential and selected targets are updated in the following loop
     //TODO(jacksonyao): take withinThresholdUtilizedNodes as candidate for both
@@ -232,8 +232,8 @@ public class ContainerBalanceIteration {
     findSourceStrategy.reInitialize(getPotentialSources());
 
     boolean isMoveGeneratedInThisIteration = false;
-    boolean canAdaptWhenNearingLimits = true;
-    boolean canAdaptOnReachingLimits = true;
+    boolean canAdaptWhenNearingLimits = config.adaptBalanceWhenCloseToLimits();
+    boolean canAdaptOnReachingLimits = config.adaptBalanceWhenReachTheLimits();
     currentState.reset();
 
     // match each source node with a target
@@ -291,7 +291,7 @@ public class ContainerBalanceIteration {
       currentState.result =
           ContainerBalancerTask.IterationResult.CAN_NOT_BALANCE_ANY_MORE;
     } else {
-      checkIterationMoveResults(moveTimeoutInMillis);
+      checkIterationMoveResults(config.getMoveTimeout().toMillis());
       currentState.datanodeCountUsedIteration =
           selectedSources.size() + selectedTargets.size();
       collectMetrics();

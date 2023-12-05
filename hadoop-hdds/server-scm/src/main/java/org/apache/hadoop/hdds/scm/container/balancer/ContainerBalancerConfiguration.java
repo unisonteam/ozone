@@ -61,6 +61,26 @@ public final class ContainerBalancerConfiguration {
           "that can be involved in balancing in one iteration.")
   private int maxDatanodesPercentageToInvolvePerIteration = 20;
 
+  @Config(key = "adapt.balance.when.close.to.limit",
+      type = ConfigType.BOOLEAN,
+      defaultValue = "true",
+      tags = {ConfigTag.BALANCER},
+      description = "Allow to reset potential target datanodes if balancer " +
+          "is one datanode away from " +
+          "datanodes.involved.max.percentage.per.iteration limit"
+  )
+  private boolean adaptBalanceWhenCloseToLimit = true;
+
+  @Config(key = "adapt.balance.when.each.the.limit",
+      type = ConfigType.BOOLEAN,
+      defaultValue = "true",
+      tags = {ConfigTag.BALANCER},
+      description = "lAlow to reset potential source and target datanodes " +
+          "if balancer has reached " +
+          "datanodes.involved.max.percentage.per.iteration limit"
+  )
+  private boolean adaptBalanceWhenReachTheLimit = true;
+
   @Config(key = "size.moved.max.per.iteration", type = ConfigType.SIZE,
       defaultValue = "500GB", tags = {ConfigTag.BALANCER},
       description = "The maximum size of data in bytes that will be moved " +
@@ -285,6 +305,22 @@ public final class ContainerBalancerConfiguration {
    */
   public void setMaxSizeToMovePerIteration(long maxSizeToMovePerIteration) {
     this.maxSizeToMovePerIteration = maxSizeToMovePerIteration;
+  }
+
+  public boolean adaptBalanceWhenCloseToLimits() {
+    return adaptBalanceWhenCloseToLimit;
+  }
+
+  public void setAdaptBalanceWhenCloseToLimit(boolean value) {
+    adaptBalanceWhenCloseToLimit = value;
+  }
+
+  public boolean adaptBalanceWhenReachTheLimits() {
+    return adaptBalanceWhenReachTheLimit;
+  }
+
+  public void setAdaptBalanceWhenReachTheLimit(boolean value) {
+    adaptBalanceWhenReachTheLimit = value;
   }
 
   public long getMaxSizeEnteringTarget() {

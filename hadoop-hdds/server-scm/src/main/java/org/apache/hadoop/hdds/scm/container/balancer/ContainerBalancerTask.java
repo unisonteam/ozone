@@ -168,7 +168,7 @@ public class ContainerBalancerTask implements Runnable {
       }
 
       IterationResult iterationResult =
-          it.doIteration(this::isRunning, config.getMoveTimeout().toMillis());
+          it.doIteration(this::isRunning, config);
 
       LOG.info("Result of this iteration of Container Balancer: {}",
           iterationResult);
