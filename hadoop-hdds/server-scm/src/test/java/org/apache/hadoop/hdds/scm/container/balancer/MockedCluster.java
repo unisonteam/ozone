@@ -29,7 +29,6 @@ import org.apache.hadoop.hdds.scm.container.ContainerInfo;
 import org.apache.hadoop.hdds.scm.container.ContainerReplica;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
 import org.apache.hadoop.hdds.scm.node.DatanodeUsageInfo;
-import org.apache.hadoop.ozone.OzoneConsts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,17 +43,14 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Class is used for creating test cluster with a required number of datanodes.
- * <p>
- * Create an unbalanced cluster by generating some data.
- * <p>
- * Nodes in the cluster have utilization values determined by
- * generateUtilization method.
+ * 1. Fill the cluster by generating some data.
+ * 2. Nodes in the cluster have utilization values determined by
+ *    generateUtilization method.
  */
-final class TestableCluster {
+public final class MockedCluster {
   static final ThreadLocalRandom RANDOM = ThreadLocalRandom.current();
   private static final Logger LOG =
-      LoggerFactory.getLogger(TestableCluster.class);
-  public static final long STORAGE_UNIT = OzoneConsts.GB;
+      LoggerFactory.getLogger(MockedCluster.class);
   private final int nodeCount;
   private final double[] nodeUtilizationList;
   private final DatanodeUsageInfo[] nodesInCluster;
@@ -65,12 +61,12 @@ final class TestableCluster {
       datanodeToContainersMap = new HashMap<>();
   private final double averageUtilization;
 
-  TestableCluster(int numberOfNodes) {
+  MockedCluster(int numberOfNodes, long storageUnit) {
     nodeCount = numberOfNodes;
     nodeUtilizationList = createUtilizationList(nodeCount);
     nodesInCluster = new DatanodeUsageInfo[nodeCount];
 
-    generateData();
+    generateData(storageUnit);
     createReplicasForContainers();
     long clusterCapacity = 0, clusterUsedSpace = 0;
 
@@ -87,7 +83,7 @@ final class TestableCluster {
 
       // use node utilization and used space to determine node capacity
       if (nodeUtilizationList[i] == 0) {
-        datanodeCapacity = STORAGE_UNIT * RANDOM.nextInt(10, 60);
+        datanodeCapacity = storageUnit * RANDOM.nextInt(10, 60);
       } else {
         datanodeCapacity = (long) (datanodeUsedSpace / nodeUtilizationList[i]);
       }
@@ -99,6 +95,11 @@ final class TestableCluster {
     }
 
     averageUtilization = (double) clusterUsedSpace / clusterCapacity;
+  }
+
+  @Override
+  public String toString() {
+    return "cluster of " + nodeCount + " nodes";
   }
 
   Map<DatanodeUsageInfo, Set<ContainerID>> getDatanodeToContainersMap() {
@@ -160,7 +161,7 @@ final class TestableCluster {
   /**
    * Create some datanodes and containers for each node.
    */
-  private void generateData() {
+  private void generateData(long storageUnit) {
     // create datanodes and add containers to them
     for (int i = 0; i < nodeCount; i++) {
       DatanodeUsageInfo usageInfo =
@@ -175,7 +176,7 @@ final class TestableCluster {
         sizeMultiple %= 5;
         sizeMultiple++;
         ContainerInfo container =
-            createContainer((long) i * i + j, sizeMultiple);
+            createContainer((long) i * i + j, storageUnit * sizeMultiple);
 
         cidToInfoMap.put(container.containerID(), container);
         containerIDSet.add(container.containerID());
@@ -190,12 +191,12 @@ final class TestableCluster {
     }
   }
 
-  private @Nonnull ContainerInfo createContainer(long id, int multiple) {
+  private @Nonnull ContainerInfo createContainer(long id, long usedBytes) {
     ContainerInfo.Builder builder = new ContainerInfo.Builder()
         .setContainerID(id)
         .setState(HddsProtos.LifeCycleState.CLOSED)
         .setOwner("TestContainerBalancer")
-        .setUsedBytes(STORAGE_UNIT * multiple);
+        .setUsedBytes(usedBytes);
 
     /*
     Make it a RATIS container if id is even, else make it an EC container
