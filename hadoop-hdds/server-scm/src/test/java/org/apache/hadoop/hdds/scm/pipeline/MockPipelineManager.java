@@ -60,6 +60,10 @@ public class MockPipelineManager implements PipelineManager {
         .build();
   }
 
+  public PipelineStateManager getStateManager() {
+    return stateManager;
+  }
+
   @Override
   public Pipeline createPipeline(ReplicationConfig replicationConfig)
       throws IOException {

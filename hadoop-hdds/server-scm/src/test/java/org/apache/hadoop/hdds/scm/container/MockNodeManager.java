@@ -58,6 +58,7 @@ import org.assertj.core.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jakarta.annotation.Nonnull;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,6 +68,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -100,6 +102,7 @@ public class MockNodeManager implements NodeManager {
       new NodeData(OzoneConsts.TB, 200L * OzoneConsts.GB, NodeData.STALE),
       new NodeData(OzoneConsts.TB, 200L * OzoneConsts.GB, NodeData.DEAD)
   };
+  public static final Random RANDOM = new Random();
   private final List<DatanodeDetails> healthyNodes;
   private final List<DatanodeDetails> staleNodes;
   private final List<DatanodeDetails> deadNodes;
@@ -244,6 +247,21 @@ public class MockNodeManager implements NodeManager {
     }
 
   }
+
+  public void addDatanode(@Nonnull DatanodeDetails dn) {
+    NodeData node = NODES[RANDOM.nextInt(NODES.length)];
+    long remaining = node.capacity - node.used;
+
+    register(dn, null, null);
+
+    SCMNodeStat newStat = new SCMNodeStat();
+    newStat.set(node.capacity, node.used, remaining, 0, 0);
+    this.nodeMetricMap.put(dn, newStat);
+    aggregateStat.add(newStat);
+
+    healthyNodes.add(dn);
+  }
+
 
   /**
    * Sets the safe mode value.
