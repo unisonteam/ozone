@@ -655,10 +655,13 @@ public class MiniOzoneClusterImpl implements MiniOzoneCluster {
       // default max retry timeout set to 30s
       scmClientConfig.setMaxRetryTimeout(30 * 1000);
       conf.setFromObject(scmClientConfig);
-      // In this way safemode exit will happen only when atleast we have one
-      // pipeline.
-      conf.setInt(HddsConfigKeys.HDDS_SCM_SAFEMODE_MIN_DATANODE,
-          numOfDatanodes >= 3 ? 3 : 1);
+
+      // In this way safemode exit will happen only when atleast we have one pipeline.
+      if (scmSafeModeExitWhenAllDatanodesAreReady) {
+        conf.setInt(HddsConfigKeys.HDDS_SCM_SAFEMODE_MIN_DATANODE, numOfDatanodes);
+      } else {
+        conf.setInt(HddsConfigKeys.HDDS_SCM_SAFEMODE_MIN_DATANODE, numOfDatanodes >= 3 ? 3 : 1);
+      }
     }
 
     void removeConfiguration() {
@@ -824,16 +827,11 @@ public class MiniOzoneClusterImpl implements MiniOzoneCluster {
     }
 
     protected void configureSCM() {
-      conf.set(ScmConfigKeys.OZONE_SCM_CLIENT_ADDRESS_KEY,
-          localhostWithFreePort());
-      conf.set(ScmConfigKeys.OZONE_SCM_BLOCK_CLIENT_ADDRESS_KEY,
-          localhostWithFreePort());
-      conf.set(ScmConfigKeys.OZONE_SCM_DATANODE_ADDRESS_KEY,
-          localhostWithFreePort());
-      conf.set(ScmConfigKeys.OZONE_SCM_HTTP_ADDRESS_KEY,
-          localhostWithFreePort());
-      conf.set(HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT,
-          "3s");
+      conf.set(ScmConfigKeys.OZONE_SCM_CLIENT_ADDRESS_KEY, localhostWithFreePort());
+      conf.set(ScmConfigKeys.OZONE_SCM_BLOCK_CLIENT_ADDRESS_KEY, localhostWithFreePort());
+      conf.set(ScmConfigKeys.OZONE_SCM_DATANODE_ADDRESS_KEY, localhostWithFreePort());
+      conf.set(ScmConfigKeys.OZONE_SCM_HTTP_ADDRESS_KEY, localhostWithFreePort());
+      conf.set(HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT, "3s");
     }
 
     private void configureOM() {

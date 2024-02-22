@@ -44,6 +44,8 @@ public class TestMiniOzoneClusterFairPipelineDistribution {
     OZONE_CONFIGURATION.setBoolean(OMConfigKeys.OZONE_OM_RATIS_ENABLE_KEY, false);
     OZONE_CONFIGURATION.setBoolean(ScmConfigKeys.OZONE_SCM_PIPELINE_AUTO_CREATE_FACTOR_ONE, false);
     OZONE_CONFIGURATION.setInt(ScmConfigKeys.OZONE_DATANODE_PIPELINE_LIMIT, 10);
+//    OZONE_CONFIGURATION.setBoolean(HddsConfigKeys.HDDS_SCM_SAFEMODE_PIPELINE_CREATION, false);
+//    OZONE_CONFIGURATION.setTimeDuration(HddsConfigKeys.HDDS_SCM_WAIT_TIME_AFTER_SAFE_MODE_EXIT, 3, TimeUnit.SECONDS);
   }
 
   private static MiniOzoneClusterImpl initCluster(@Nonnull String id, int datanodeCount)
@@ -51,8 +53,8 @@ public class TestMiniOzoneClusterFairPipelineDistribution {
     String omServiceId = "om-service-test" + id;
     String scmServiceId = "scm-service-test" + id;
 
-    MiniOzoneClusterImpl cluster = (MiniOzoneClusterImpl) MiniOzoneCluster.newBuilder(
-            TestMiniOzoneClusterFairPipelineDistribution.OZONE_CONFIGURATION)
+    MiniOzoneClusterImpl cluster = (MiniOzoneClusterImpl) MiniOzoneCluster.newBuilder(OZONE_CONFIGURATION)
+        .setScmSafeModeExitWhenAllDatanodesAreReady(true)
         .setOMServiceId(omServiceId)
         .setSCMServiceId(scmServiceId)
         .setNumDatanodes(datanodeCount)

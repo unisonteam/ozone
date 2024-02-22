@@ -172,8 +172,8 @@ public class TestRatisThreePipelineDistribution {
     switch (maxNodeCountWithTheLeastNumberOfPipelines) {
     case 1:
       // todo: Uncomment to make TestMiniOzoneClusterFairPipelineDistribution fail
-//      int nodeIdx = nodeIndexesArr[0];
-//      assertThat(pipelinesCountPerDn[nodeIdx]).isGreaterThan(0);
+      int nodeIdx = nodeIndexesArr[0];
+      assertThat(pipelinesCountPerDn[nodeIdx]).isGreaterThan(0);
       break;
     case 2:
       int firstNodeIdx = nodeIndexesArr[0];
@@ -183,8 +183,8 @@ public class TestRatisThreePipelineDistribution {
       assertEquals(firstNodePipelineCount, secondNodePipelineCount);
 
       // todo: Uncomment to make TestMiniOzoneClusterFairPipelineDistribution fail
-//      assertThat(firstNodePipelineCount).isGreaterThan(0);
-//      assertThat(secondNodePipelineCount).isGreaterThan(0);
+      assertThat(firstNodePipelineCount).isGreaterThan(0);
+      assertThat(secondNodePipelineCount).isGreaterThan(0);
       break;
     default:
       break;

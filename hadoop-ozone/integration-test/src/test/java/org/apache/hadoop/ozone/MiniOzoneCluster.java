@@ -324,7 +324,8 @@ public interface MiniOzoneCluster extends AutoCloseable {
 
     protected int numOfDatanodes = 3;
     protected int numDataVolumes = 1;
-    protected boolean  startDataNodes = true;
+    protected boolean startDataNodes = true;
+    protected boolean scmSafeModeExitWhenAllDatanodesAreReady = false;
     protected CertificateClient certClient;
     protected SecretKeyClient secretKeyClient;
 
@@ -400,6 +401,20 @@ public interface MiniOzoneCluster extends AutoCloseable {
      */
     public Builder setNumDatanodes(int val) {
       numOfDatanodes = val;
+      return this;
+    }
+
+    /**
+     * Sets the value that is used for SCM configuration: exit from SCM safe mode when all datanodes are ready
+     * or when we have at least 3 datanodes (1 RATIS pipeline).
+     * By default
+     *
+     * @param val condition for exiting SCM safe mode
+     *
+     * @return MiniOzoneCluster.Builder
+     */
+    public Builder setScmSafeModeExitWhenAllDatanodesAreReady(boolean val) {
+      scmSafeModeExitWhenAllDatanodesAreReady = val;
       return this;
     }
 
