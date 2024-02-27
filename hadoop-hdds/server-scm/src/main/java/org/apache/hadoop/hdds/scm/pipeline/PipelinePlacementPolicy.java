@@ -478,16 +478,17 @@ public final class PipelinePlacementPolicy extends SCMCommonPlacementPolicy {
    */
   @Override
   public DatanodeDetails chooseNode(final List<DatanodeDetails> healthyNodes) {
-    if (healthyNodes == null || healthyNodes.isEmpty()) {
-      return null;
-    }
-    DatanodeDetails selectedNode =
-            healthyNodes.get(getRand().nextInt(healthyNodes.size()));
-    healthyNodes.remove(selectedNode);
-    if (selectedNode != null) {
-      removePeers(selectedNode, healthyNodes);
-    }
-    return selectedNode;
+    return chooseFirstNode(healthyNodes);
+//    if (healthyNodes == null || healthyNodes.isEmpty()) {
+//      return null;
+//    }
+//    DatanodeDetails selectedNode =
+//            healthyNodes.get(getRand().nextInt(healthyNodes.size()));
+//    healthyNodes.remove(selectedNode);
+//    if (selectedNode != null) {
+//      removePeers(selectedNode, healthyNodes);
+//    }
+//    return selectedNode;
   }
 
   /**
