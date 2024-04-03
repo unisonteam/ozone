@@ -43,8 +43,8 @@ OZONE-SITE.XML_ozone.scm.ratis.enable=true
 
 
 OZONE-SITE.XML_ozone.scm.primordial.node.id=scm1
-OZONE-SITE.XML_ozone.scm.block.client.address=scm
-OZONE-SITE.XML_ozone.scm.client.address=scm
+# OZONE-SITE.XML_ozone.scm.block.client.address=scm
+# OZONE-SITE.XML_ozone.scm.client.address=scm
 OZONE-SITE.XML_ozone.om.s3.grpc.server_enabled=true
 
 OZONE-SITE.XML_ozone.datanode.pipeline.limit=10
