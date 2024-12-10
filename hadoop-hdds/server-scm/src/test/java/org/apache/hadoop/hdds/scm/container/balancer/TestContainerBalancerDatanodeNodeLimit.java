@@ -592,9 +592,9 @@ public class TestContainerBalancerDatanodeNodeLimit {
       throws NodeNotFoundException, ContainerNotFoundException, TimeoutException, ContainerReplicaNotFoundException {
     int nodeCount = mockedSCM.getNodeCount();
     ContainerBalancerConfiguration config = new ContainerBalancerConfigBuilder(mockedSCM.getNodeCount()).build();
-//    config.setMaxSizeEnteringTarget(10 * STORAGE_UNIT);
-//    config.setMaxSizeToMovePerIteration(100 * STORAGE_UNIT);
-    config.setMoveTimeout(Duration.ofMillis(500));
+    config.setMaxSizeEnteringTarget(10 * STORAGE_UNIT);
+    config.setMaxSizeToMovePerIteration(100 * STORAGE_UNIT);
+    config.setMoveTimeout(Duration.ofMillis(1000));
 
     CompletableFuture<MoveManager.MoveResult> future = new CompletableFuture<>();
     future.completeExceptionally(new RuntimeException("Runtime Exception"));
